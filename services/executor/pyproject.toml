@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "executor-service"
+version = "1.0.0"
+description = "Always-on test executor — regression and user story runs"
+authors = []
+packages = []
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115"
+uvicorn = { version = "^0.32", extras = ["standard"] }
+openpyxl = "^3.1"
+httpx = "^0.27"
+python-dotenv = "^1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

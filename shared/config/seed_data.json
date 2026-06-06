@@ -1,0 +1,23 @@
+{
+  "appId": "sample-app",
+  "appUrl": "",
+  "auth": {
+    "strategy": "form",
+    "loginUrl": "/login",
+    "fields": {
+      "#email": "${APP_USERNAME}",
+      "#password": "${APP_PASSWORD}"
+    },
+    "submitSelector": "#submit-btn",
+    "successIndicator": "#dashboard"
+  },
+  "blocklist": ["/logout", "/delete", "/destroy"],
+  "form_pool": {
+    "email": "testuser@poc.test",
+    "password": "TestPass123!",
+    "text": "Sample input",
+    "number": "42",
+    "phone": "5551234567",
+    "date": "2024-06-01"
+  }
+}

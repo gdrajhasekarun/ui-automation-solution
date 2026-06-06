@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+playwright
+firecrawl-py
+httpx
+python-dotenv
