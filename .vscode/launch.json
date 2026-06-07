@@ -1,0 +1,114 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dashboard :8000",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8000", "--reload"],
+      "cwd": "${workspaceFolder}/services/dashboard",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Crawl :8001",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8001", "--reload"],
+      "cwd": "${workspaceFolder}/services/crawl",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000",
+        "GENERATOR_URL": "http://localhost:8002"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Generator :8002",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8002", "--reload"],
+      "cwd": "${workspaceFolder}/services/generator",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Planner :8003",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8003", "--reload"],
+      "cwd": "${workspaceFolder}/services/planner",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Executor :8004",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8004", "--reload"],
+      "cwd": "${workspaceFolder}/services/executor",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "All Services",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8000"],
+      "cwd": "${workspaceFolder}/services/dashboard",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared"
+      },
+      "preLaunchTask": "start-all-services",
+      "jinja": true,
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "All Services (compound)",
+      "configurations": [
+        "Dashboard :8000",
+        "Crawl :8001",
+        "Generator :8002",
+        "Planner :8003",
+        "Executor :8004"
+      ],
+      "stopAll": true
+    }
+  ]
+}

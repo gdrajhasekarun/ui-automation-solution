@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import CRAWL_URL, EXECUTOR_URL, GENERATOR_URL, PLANNER_URL, PORT
-from db import db_emit_event, db_get, db_insert, db_list, db_update
+from db import db_emit_event, db_get, db_insert, db_list, db_list_since, db_update
 from models import (CrawlTriggerBody, EventBody, ExecuteResultsBody,
                     ExecuteRunBody, PlanRunBody)
 
@@ -64,8 +64,11 @@ async def emit_event(body: EventBody):
 
 
 @app.get("/api/events/{app_id}")
-def get_events(app_id: str, limit: int = 50):
-    events = db_list("ui_events", "app_id = ?", [app_id], limit=limit)
+def get_events(app_id: str, limit: int = 200, since: str = ""):
+    if since:
+        events = db_list_since("ui_events", app_id, since, limit=limit)
+    else:
+        events = db_list("ui_events", "app_id = ?", [app_id], limit=limit)
     return {"events": list(reversed(events))}
 
 
@@ -249,6 +252,17 @@ def get_parameters(tc_id: str):
 def get_run_results(run_id: str):
     results = db_list("test_results", "run_id = ?", [run_id], limit=500)
     return {"results": results}
+
+
+_SHARED_DIR = os.environ.get("SHARED_DIR", os.path.join(os.path.dirname(__file__), "../../shared"))
+
+@app.get("/api/graph/{app_id}")
+def get_graph(app_id: str):
+    graph_path = os.path.join(_SHARED_DIR, "outputs", app_id, "graph.json")
+    if not os.path.exists(graph_path):
+        return JSONResponse(status_code=404, content={"detail": "Graph not found — run the pipeline first"})
+    with open(graph_path) as f:
+        return json.load(f)
 
 
 @app.get("/api/services/health")

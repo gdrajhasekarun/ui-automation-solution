@@ -1,0 +1,6 @@
+{
+  "pythonPath": "../../.venv/bin/python",
+  "extraPaths": [".", "services/executor"],
+  "venvPath": "../..",
+  "venv": ".venv"
+}

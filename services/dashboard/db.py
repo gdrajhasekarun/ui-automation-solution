@@ -96,6 +96,15 @@ def db_list(table: str, where: str = "", params: list = None, limit: int = 100) 
     return [dict(r) for r in rows]
 
 
+def db_list_since(table: str, app_id: str, since: str, limit: int = 200) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        f"SELECT * FROM {table} WHERE app_id = ? AND created_at >= ? ORDER BY rowid DESC LIMIT ?",
+        [app_id, since, limit],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def db_emit_event(app_id: str, stage: str, message: str, level: str = "INFO"):
     db_insert("ui_events", {
         "event_id": "evt-" + uuid.uuid4().hex[:8],

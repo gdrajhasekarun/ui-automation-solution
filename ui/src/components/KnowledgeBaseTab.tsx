@@ -1,21 +1,22 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Input, Drawer } from 'antd'
-import { UnorderedListOutlined } from '@ant-design/icons'
+import { Button, Input, Drawer, Spin } from 'antd'
+import { UnorderedListOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useTheme } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
 import { setAppId, setAppUrl, setFrameworkDir } from '../store/appSlice'
-import { useTriggerCrawlMutation, useGetEventsQuery } from '../store/api'
+import { useTriggerCrawlMutation, useGetEventsQuery, useGetGraphQuery } from '../store/api'
+import GraphView from './GraphView'
 import type { UiEvent } from '../types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type StageStatus = 'not_started' | 'in_progress' | 'complete' | 'needs_review' | 'failed'
+type StageStatus = 'not_started' | 'in_progress' | 'complete' | 'needs_review' | 'failed' | 'skipped'
 
 interface SubStage { key: 'firecrawl' | 'playwright' | 'graph' | 'pom' | 'diff'; label: string }
 interface StageDef  { name: string; substages: SubStage[] }
 
 const STAGE_DEFS: StageDef[] = [
   { name: 'Page Crawl', substages: [
-    { key: 'firecrawl',  label: 'Firecrawl — page discovery' },
+    { key: 'firecrawl',  label: 'Crawl4AI — page discovery' },
     { key: 'playwright', label: 'Playwright — interaction tracing' },
   ]},
   { name: 'Graph Build', substages: [
@@ -27,7 +28,7 @@ const STAGE_DEFS: StageDef[] = [
 ]
 
 const EVENT_STAGE_MAP: Record<string, SubStage['key']> = {
-  CRAWL_FC: 'firecrawl', CRAWL_PW: 'playwright',
+  CRAWL_C4AI: 'firecrawl', CRAWL_FC: 'firecrawl', CRAWL_PW: 'playwright',
   GRAPH: 'graph', GENERATOR: 'pom', DIFF: 'diff',
 }
 
@@ -41,12 +42,32 @@ const freshStages = (): StagesState => ({
   diff:       { status: 'not_started', summary: '' },
 })
 
+// Pipeline order — a failure at any substage skips all substages after it
+const PIPELINE_ORDER: SubStage['key'][] = ['firecrawl', 'playwright', 'graph', 'pom', 'diff']
+
+function applySkips(state: StagesState): StagesState {
+  let failing = false
+  const next = { ...state }
+  for (const key of PIPELINE_ORDER) {
+    if (failing) {
+      if (next[key].status === 'not_started') {
+        next[key] = { ...next[key], status: 'skipped' }
+      }
+    } else if (next[key].status === 'failed') {
+      failing = true
+    }
+  }
+  return next
+}
+
 function aggregateStatus(keys: SubStage['key'][], stages: StagesState): StageStatus {
   const all = keys.map(k => stages[k])
-  if (all.every(s => s.status === 'complete'))      return 'complete'
+  if (all.every(s => s.status === 'skipped'))       return 'skipped'
+  if (all.every(s => s.status === 'complete' || s.status === 'skipped')) return 'complete'
   if (all.some(s  => s.status === 'failed'))        return 'failed'
   if (all.some(s  => s.status === 'needs_review'))  return 'needs_review'
   if (all.some(s  => s.status === 'in_progress'))   return 'in_progress'
+  if (all.some(s  => s.status === 'skipped'))       return 'skipped'
   return 'not_started'
 }
 
@@ -57,22 +78,24 @@ function StageCard({ def, stages }: { def: StageDef; stages: StagesState }) {
 
   const colorMap: Record<StageStatus, string> = {
     not_started: C.border, in_progress: C.inProgress,
-    complete: C.complete, needs_review: C.needsReview, failed: C.failed,
+    complete: C.complete, needs_review: C.needsReview, failed: C.failed, skipped: C.muted,
   }
   const labelMap: Record<StageStatus, string> = {
     not_started: 'Not Started', in_progress: 'In Progress',
-    complete: 'Complete', needs_review: 'Needs Review', failed: 'Failed',
+    complete: 'Complete', needs_review: 'Needs Review', failed: 'Failed', skipped: 'Skipped',
   }
   const color = colorMap[agg]
   const summary = def.substages.map(s => stages[s.key].summary).find(Boolean)
 
   return (
-    <div style={{ flex: 1, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 18px', minWidth: 180 }}>
+    <div style={{ flex: 1, background: C.surface2, border: `1px solid ${agg === 'in_progress' ? color + '88' : C.border}`, borderRadius: 8, padding: '16px 18px', minWidth: 180, transition: 'border-color 0.3s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{
-          width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0,
-          ...(agg === 'in_progress' ? { animation: 'kb-pulse 1.2s ease-in-out infinite' } : {}),
-        }} />
+        {agg === 'in_progress'
+          ? <Spin indicator={<LoadingOutlined style={{ fontSize: 12, color }} spin />} />
+          : agg === 'skipped'
+          ? <span style={{ width: 10, height: 2, background: C.muted, flexShrink: 0, borderRadius: 1, display: 'inline-block', marginBottom: 1 }} />
+          : <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
+        }
         <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text }}>{def.name}</span>
       </div>
       <div style={{
@@ -107,23 +130,34 @@ export default function KnowledgeBaseTab() {
   const [logDrawerOpen, setLogOpen] = useState(false)
   const [polling, setPolling]       = useState(false)
   const [localError, setLocalError] = useState('')
+  // Only process events emitted after the most recent trigger
+  const triggerTimeRef              = React.useRef<number>(0)
+  const [triggerSince, setTriggerSince] = useState('')
 
   const [triggerCrawl, { isLoading: triggering, error: triggerError }] = useTriggerCrawlMutation()
 
+  // Load graph whenever pom stage completes (pipeline done)
+  const graphReady = stages.pom.status === 'complete' || stages.pom.status === 'needs_review'
+  const { data: graphData } = useGetGraphQuery(appId, { skip: !appId || !graphReady })
+
   // Poll events via RTK Query — polling active after trigger, every 2s
   const { data: events = [] } = useGetEventsQuery(
-    { appId, limit: 200 },
+    { appId, limit: 200, since: triggerSince || undefined },
     { pollingInterval: polling ? 2000 : 0, skip: !appId }
   )
 
   // Derive stage state from the RTK Query event stream
   useEffect(() => {
+    const cutoff = triggerTimeRef.current
     const newEvs = events.filter(ev => {
-      const id = ev.event_id ?? ev.id ?? (String(ev.created_at ?? ev.timestamp ?? '') + ev.message)
+      const ts = ev.created_at ?? ev.timestamp ?? ''
+      if (ts && new Date(ts).getTime() < cutoff) return false
+      const id = ev.event_id ?? ev.id ?? (ts + ev.message)
       if (seenIds.has(id)) return false
       seenIds.add(id); return true
     })
     if (!newEvs.length) return
+
     setStages(prev => {
       let next = { ...prev }
       newEvs.forEach(ev => {
@@ -141,9 +175,22 @@ export default function KnowledgeBaseTab() {
         }
         next = { ...next, [key]: s }
       })
-      return next
+      return applySkips(next)
     })
   }, [events, seenIds])
+
+  // Stop polling once the pipeline reaches a terminal state
+  useEffect(() => {
+    if (!polling) return
+    const isTerminal = (s: { status: StageStatus }) =>
+      s.status === 'complete' || s.status === 'needs_review' || s.status === 'failed' || s.status === 'skipped'
+    if (
+      isTerminal(stages.pom) ||
+      (isTerminal(stages.firecrawl) && isTerminal(stages.playwright) && isTerminal(stages.graph))
+    ) {
+      setPolling(false)
+    }
+  }, [stages, polling])
 
   const buildKnowledgeBase = async () => {
     setLocalError('')
@@ -151,6 +198,9 @@ export default function KnowledgeBaseTab() {
     if (!appUrl.trim()) { setLocalError('App URL is required.'); return }
     seenIds.clear()
     setStages(freshStages())
+    const sinceMs = Date.now() - 5000  // 5s grace for clock skew
+    triggerTimeRef.current = sinceMs
+    setTriggerSince(new Date(sinceMs).toISOString())
     setPolling(true)
     try {
       await triggerCrawl({
@@ -184,7 +234,7 @@ export default function KnowledgeBaseTab() {
 
   return (
     <div>
-      <style>{`@keyframes kb-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
+
 
       {/* ── Inputs ── */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 24 }}>
@@ -200,8 +250,14 @@ export default function KnowledgeBaseTab() {
           <div style={labelStyle}>Framework Dir</div>
           <Input value={frameworkDir} onChange={e => dispatch(setFrameworkDir(e.target.value))} placeholder="./shared/java" style={{ width: 220 }} />
         </div>
-        <Button type="primary" loading={triggering} onClick={buildKnowledgeBase} style={{ alignSelf: 'flex-end' }}>
-          ▶ Build Knowledge Base
+        <Button
+          type="primary"
+          loading={triggering || polling}
+          disabled={triggering || polling}
+          onClick={buildKnowledgeBase}
+          style={{ alignSelf: 'flex-end' }}
+        >
+          {polling ? 'Running…' : '▶ Build Knowledge Base'}
         </Button>
         <div style={{ flex: 1 }} />
         <Button icon={<UnorderedListOutlined />} onClick={() => setLogOpen(true)} style={{ alignSelf: 'flex-end' }}>
@@ -222,6 +278,13 @@ export default function KnowledgeBaseTab() {
           {STAGE_DEFS.map((def, i) => <StageCard key={i} def={def} stages={stages} />)}
         </div>
       </div>
+
+      {/* ── Site Graph ── */}
+      {graphData && (
+        <div style={{ marginTop: 32 }}>
+          <GraphView data={graphData as Parameters<typeof GraphView>[0]['data']} />
+        </div>
+      )}
 
       {/* ── Event Log Drawer ── */}
       <Drawer

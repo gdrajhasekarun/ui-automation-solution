@@ -1,0 +1,22 @@
+# Shared venv for all 5 services
+# Install: pip install -r requirements.txt
+# Post-install: crawl4ai-setup && playwright install chromium
+
+# Web framework (all services)
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+aiofiles
+
+# Crawl service
+crawl4ai>=0.4
+playwright
+
+# Planner service
+langchain-openai
+langgraph
+langchain-core
+
+# Planner + Executor
+openpyxl

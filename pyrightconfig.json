@@ -1,0 +1,27 @@
+{
+  "pythonPath": ".venv/bin/python",
+  "venvPath": ".",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "services/crawl",
+      "extraPaths": ["services/crawl"]
+    },
+    {
+      "root": "services/dashboard",
+      "extraPaths": ["services/dashboard"]
+    },
+    {
+      "root": "services/generator",
+      "extraPaths": ["services/generator"]
+    },
+    {
+      "root": "services/planner",
+      "extraPaths": ["services/planner"]
+    },
+    {
+      "root": "services/executor",
+      "extraPaths": ["services/executor"]
+    }
+  ]
+}

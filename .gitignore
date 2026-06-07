@@ -10,8 +10,8 @@ dist/
 build/
 .claude/
 
-# Poetry
-poetry.lock
+# Poetry — lock file IS committed (ensures reproducible installs for teammates)
+# poetry.lock  ← do NOT ignore this
 
 # Node / React UI
 ui/node_modules/
@@ -24,22 +24,14 @@ shared/java/*.class
 shared/java/testng.xml
 shared/java/src/test/resources/testdata.xlsx
 
-# Generated outputs (keep structure, ignore content)
-shared/outputs/*/crawl_raw.json
-shared/outputs/*/graph.json
-shared/outputs/*/graph_previous.json
-shared/outputs/*/diff_report.json
-shared/outputs/*/pom_registry.json
-
-# Generated Java source
-shared/java/src/main/java/pages/
-shared/java/src/test/java/tests/generated/
+# Generated pipeline outputs
+shared/outputs/
+framework/src/main/java/pages/
 
 # macOS
 .DS_Store
 
 # IDE
-.vscode/
 .idea/
 *.iml
 

@@ -1,6 +1,6 @@
 fastapi
 uvicorn
+crawl4ai
 playwright
-firecrawl-py
 httpx
 python-dotenv

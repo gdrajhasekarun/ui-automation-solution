@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import traceback
@@ -8,7 +7,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import BackgroundTasks, FastAPI
 
-from config import DASHBOARD_URL, JAVA_DIR, PORT, SHARED_DIR
+from config import DASHBOARD_URL, JAVA_DIR, PORT, REPO_ROOT, SHARED_DIR
 from pom_generator import generate_all
 from pom_registry import generate_registry
 from pom_updater import update_incrementally
@@ -21,7 +20,7 @@ _jobs: dict = {}
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     logger.info("=" * 50)
     logger.info("Generator service ready — waiting for crawl completion")
     logger.info("Deployment type: LAMBDA-STYLE (event-driven)")
@@ -49,33 +48,37 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
         pass
 
 
-async def _run_generation(job_id: str, app_id: str, build_id: str, trigger_type: str):
+async def _run_generation(job_id: str, app_id: str, trigger_type: str, framework_dir: str):
     _jobs[job_id]["status"] = "running"
     try:
         await _notify(app_id, "GENERATOR", f"Generator service activated — processing graph for {app_id}")
 
+        # Resolve framework_dir: if relative, anchor to repo root (not service CWD)
+        raw_dir = framework_dir if framework_dir else JAVA_DIR
+        java_dir = raw_dir if os.path.isabs(raw_dir) else os.path.join(REPO_ROOT, raw_dir.lstrip("./\\"))
         out_dir = os.path.join(SHARED_DIR, "outputs", app_id)
         graph_path = os.path.join(out_dir, "graph.json")
         diff_path = os.path.join(out_dir, "diff_report.json")
-        pages_dir = os.path.join(JAVA_DIR, "src", "main", "java", "pages")
+        pages_dir = os.path.join(java_dir, "src", "main", "java", "pages")
 
         if trigger_type == "INITIAL" or not os.path.exists(diff_path):
-            result = generate_all(graph_path, pages_dir, app_id)
+            result = generate_all(graph_path, pages_dir)
         else:
-            result = update_incrementally(diff_path, graph_path, JAVA_DIR, app_id)
+            result = update_incrementally(diff_path, graph_path, java_dir, app_id)
 
         _jobs[job_id]["classes_written"] = result.get("count", result.get("added_classes", 0))
 
-        reg = generate_registry(graph_path, JAVA_DIR, app_id)
+        reg = generate_registry(graph_path, java_dir, app_id)
         _jobs[job_id]["methods_written"] = reg["count"]
 
-        recon = reconciler_run(diff_path, JAVA_DIR, DASHBOARD_URL)
+        recon = reconciler_run(diff_path, java_dir, DASHBOARD_URL)
         needs_review_count = len(recon.get("needs_review", []))
         _jobs[job_id]["needs_review_count"] = needs_review_count
 
         await _notify(app_id, "GENERATOR",
             f"Generation complete — {_jobs[job_id]['classes_written']} classes, "
-            f"{reg['count']} methods, {needs_review_count} need review")
+            f"{reg['count']} methods, {needs_review_count} need review",
+            "SUCCESS")
 
         _jobs[job_id]["status"] = "done"
         logger.info(f"Generation complete — {_jobs[job_id]['classes_written']} classes — service idle")
@@ -90,14 +93,14 @@ async def _run_generation(job_id: str, app_id: str, build_id: str, trigger_type:
 @app.post("/trigger")
 async def trigger(body: dict, background_tasks: BackgroundTasks):
     app_id = body["app_id"]
-    build_id = body.get("build_id", "build-" + uuid.uuid4().hex[:8])
     trigger_type = body.get("trigger_type", "INITIAL")
 
     job_id = "job-" + uuid.uuid4().hex[:8]
     _jobs[job_id] = {"status": "started", "classes_written": 0, "methods_written": 0, "needs_review_count": 0}
 
+    framework_dir = body.get("framework_dir", "")
     logger.info(f"Generator service activated — processing graph for {app_id}")
-    background_tasks.add_task(_run_generation, job_id, app_id, build_id, trigger_type)
+    background_tasks.add_task(_run_generation, job_id, app_id, trigger_type, framework_dir)
     return {"job_id": job_id, "status": "STARTED"}
 
 

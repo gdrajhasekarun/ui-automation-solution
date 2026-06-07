@@ -4,7 +4,7 @@ import os
 from typing import TypedDict, Annotated
 import operator
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
@@ -89,9 +89,9 @@ def _build_registry_summary(registry: list[dict], description: str) -> str:
 
 
 def _call_llm(state: PlannerState) -> PlannerState:
-    model = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        api_key=os.environ["ANTHROPIC_API_KEY"],
+    model = ChatOpenAI(
+        model="gpt-4o",
+        api_key=os.environ["OPENAI_API_KEY"],
         max_tokens=2000
     )
     user_content = (

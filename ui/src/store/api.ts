@@ -60,8 +60,13 @@ export const api = createApi({
       query: (body) => ({ url: '/crawl/trigger', method: 'POST', body }),
     }),
 
-    getEvents: build.query<UiEvent[], { appId: string; limit?: number }>({
-      query: ({ appId, limit = 100 }) => `/events/${encodeURIComponent(appId)}?limit=${limit}`,
+    getGraph: build.query<{ nodes: unknown[]; edges: unknown[]; meta: unknown }, string>({
+      query: (appId) => `/graph/${encodeURIComponent(appId)}`,
+    }),
+
+    getEvents: build.query<UiEvent[], { appId: string; limit?: number; since?: string }>({
+      query: ({ appId, limit = 200, since }) =>
+        `/events/${encodeURIComponent(appId)}?limit=${limit}${since ? `&since=${encodeURIComponent(since)}` : ''}`,
       transformResponse: (raw: unknown) => {
         const arr = Array.isArray(raw) ? raw : ((raw as { events?: UiEvent[] }).events ?? [])
         // newest first
@@ -127,6 +132,7 @@ export const api = createApi({
 export const {
   useTriggerCrawlMutation,
   useGetEventsQuery,
+  useGetGraphQuery,
   useLoadExcelMutation,
   usePlanRunMutation,
   useSavePlanMutation,
