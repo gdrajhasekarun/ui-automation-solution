@@ -6,12 +6,44 @@ from pathlib import Path
 logger = logging.getLogger("crawl-service.seed_builder")
 
 
-def _find_excel(framework_dir: str) -> str | None:
-    """Return the first .xlsx/.xls found under framework_dir/src/main/resources, or None.
-    Uses pathlib for cross-platform path handling (Windows and Mac)."""
+def _resolve_framework_dir(framework_dir: str) -> str | None:
+    """
+    Resolve framework_dir to an absolute path that exists on disk.
+    1. Absolute path — use as-is
+    2. Relative path — try repo root first (services/crawl is 2 levels deep), then cwd
+    """
     if not framework_dir:
         return None
-    base = Path(framework_dir).expanduser().resolve() / "src" / "main" / "resources"
+    raw = framework_dir.strip().strip('"').strip("'")
+
+    # 1) Absolute path
+    abs_path = Path(raw).expanduser().resolve()
+    if abs_path.is_dir():
+        return str(abs_path)
+
+    # 2) Repo root (services/crawl/seed_builder.py → up 2 levels)
+    repo_root = Path(__file__).parent.parent.parent.resolve()
+    repo_path = (repo_root / raw).resolve()
+    if repo_path.is_dir():
+        logger.info(f"Resolved '{raw}' from repo root: {repo_path}")
+        return str(repo_path)
+
+    # 3) Current working directory
+    cwd_path = (Path.cwd() / raw).resolve()
+    if cwd_path.is_dir():
+        logger.info(f"Resolved '{raw}' from cwd: {cwd_path}")
+        return str(cwd_path)
+
+    logger.warning(f"framework_dir '{raw}' could not be resolved (tried absolute, repo root, cwd)")
+    return None
+
+
+def _find_excel(framework_dir: str) -> str | None:
+    """Return the first .xlsx/.xls found under framework_dir/src/main/resources, or None."""
+    resolved = _resolve_framework_dir(framework_dir)
+    if not resolved:
+        return None
+    base = Path(resolved) / "src" / "main" / "resources"
     logger.info(f"Looking for Excel in: {base}")
     if not base.is_dir():
         logger.warning(f"Resources dir not found: {base}")
