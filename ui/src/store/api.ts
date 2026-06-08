@@ -132,6 +132,7 @@ export const api = createApi({
 export const {
   useTriggerCrawlMutation,
   useGetEventsQuery,
+  useLazyGetEventsQuery,
   useGetGraphQuery,
   useLoadExcelMutation,
   usePlanRunMutation,

@@ -4,7 +4,7 @@ import { UnorderedListOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useTheme } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
 import { setAppId, setAppUrl, setFrameworkDir } from '../store/appSlice'
-import { useTriggerCrawlMutation, useGetGraphQuery } from '../store/api'
+import { useTriggerCrawlMutation, useGetGraphQuery, useLazyGetEventsQuery } from '../store/api'
 import GraphView from './GraphView'
 import type { UiEvent } from '../types'
 
@@ -32,14 +32,17 @@ const EVENT_STAGE_MAP: Record<string, SubStage['key']> = {
   GRAPH: 'graph', GENERATOR: 'pom', DIFF: 'diff',
 }
 
-type StagesState = Record<SubStage['key'], { status: StageStatus; summary: string }>
+type StageEntry = { status: StageStatus; summary: string; startedAt: string; finishedAt: string }
+type StagesState = Record<SubStage['key'], StageEntry>
+
+const freshEntry = (): StageEntry => ({ status: 'not_started', summary: '', startedAt: '', finishedAt: '' })
 
 const freshStages = (): StagesState => ({
-  firecrawl:  { status: 'not_started', summary: '' },
-  playwright: { status: 'not_started', summary: '' },
-  graph:      { status: 'not_started', summary: '' },
-  pom:        { status: 'not_started', summary: '' },
-  diff:       { status: 'not_started', summary: '' },
+  firecrawl:  freshEntry(),
+  playwright: freshEntry(),
+  graph:      freshEntry(),
+  pom:        freshEntry(),
+  diff:       freshEntry(),
 })
 
 // Pipeline order — a failure at any substage skips all substages after it
@@ -87,6 +90,24 @@ function StageCard({ def, stages }: { def: StageDef; stages: StagesState }) {
   const color = colorMap[agg]
   const summary = def.substages.map(s => stages[s.key].summary).find(Boolean)
 
+  // Collect timestamps across all substages of this card
+  const startedAt  = def.substages.map(s => stages[s.key].startedAt).filter(Boolean).sort()[0]  ?? ''
+  const finishedAt = def.substages.map(s => stages[s.key].finishedAt).filter(Boolean).sort().at(-1) ?? ''
+
+  const fmt = (ts: string) => {
+    try { return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+    catch { return ts }
+  }
+
+  const duration = startedAt && finishedAt
+    ? (() => {
+        const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime()
+        if (ms < 1000) return `${ms}ms`
+        if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+        return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`
+      })()
+    : ''
+
   return (
     <div style={{ flex: 1, background: C.surface2, border: `1px solid ${agg === 'in_progress' ? color + '88' : C.border}`, borderRadius: 8, padding: '16px 18px', minWidth: 180, transition: 'border-color 0.3s' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -97,7 +118,13 @@ function StageCard({ def, stages }: { def: StageDef; stages: StagesState }) {
           : <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
         }
         <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text }}>{def.name}</span>
+        {duration && (
+          <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: C.muted }}>
+            {duration}
+          </span>
+        )}
       </div>
+
       <div style={{
         display: 'inline-block', borderRadius: 12, padding: '2px 10px', marginBottom: 10,
         background: agg === 'not_started' ? 'transparent' : color + '22',
@@ -105,9 +132,24 @@ function StageCard({ def, stages }: { def: StageDef; stages: StagesState }) {
         fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
         color: agg === 'not_started' ? C.muted : color,
       }}>{labelMap[agg]}</div>
+
       {def.substages.map(sub => (
         <div key={sub.key} style={{ fontSize: 12, color: C.muted, marginBottom: 4, lineHeight: 1.4 }}>{sub.label}</div>
       ))}
+
+      {/* Timestamps */}
+      {startedAt && (
+        <div style={{ marginTop: 8, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: C.muted, lineHeight: 1.8 }}>
+          {agg === 'in_progress'
+            ? <span>▶ Started {fmt(startedAt)}</span>
+            : <>
+                <div>▶ {fmt(startedAt)}</div>
+                {finishedAt && <div>■ {fmt(finishedAt)}</div>}
+              </>
+          }
+        </div>
+      )}
+
       {summary && (
         <div style={{ marginTop: 8, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", borderTop: `1px solid ${C.border}`, paddingTop: 8, color: agg === 'needs_review' ? C.needsReview : C.muted }}>
           ↳ {summary}
@@ -125,20 +167,43 @@ export default function KnowledgeBaseTab() {
   const appUrl       = useAppSelector(s => s.app.appUrl)
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
 
-  const [stages, setStages]         = useState<StagesState>(freshStages)
-  const [logDrawerOpen, setLogOpen] = useState(false)
-  const [running, setRunning]       = useState(false)
-  const [localError, setLocalError] = useState('')
-  const [liveEvents, setLiveEvents] = useState<UiEvent[]>([])
+  const [stages, setStages]           = useState<StagesState>(freshStages)
+  const [logDrawerOpen, setLogOpen]   = useState(false)
+  const [running, setRunning]         = useState(false)
+  const [localError, setLocalError]   = useState('')
+  const [liveEvents, setLiveEvents]   = useState<UiEvent[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
-  const seenIdsRef = useRef(new Set<string>())
-  const esRef      = useRef<EventSource | null>(null)
+  const seenIdsRef   = useRef(new Set<string>())
+  const esRef        = useRef<EventSource | null>(null)
+  const replayingRef = useRef(false)
+  const logBottomRef = useRef<HTMLDivElement | null>(null)
 
   const [triggerCrawl, { isLoading: triggering, error: triggerError }] = useTriggerCrawlMutation()
+  const [fetchEvents] = useLazyGetEventsQuery()
 
   // Load graph whenever pom stage completes (pipeline done)
   const graphReady = stages.pom.status === 'complete' || stages.pom.status === 'needs_review'
   const { data: graphData } = useGetGraphQuery(appId, { skip: !appId || !graphReady })
+
+  // On appId change: fetch existing events and replay them to restore previous run state
+  useEffect(() => {
+    if (!appId.trim() || running) return
+    seenIdsRef.current.clear()
+    setStages(freshStages())
+    setLiveEvents([])
+    setHistoryLoading(true)
+    replayingRef.current = true
+    fetchEvents({ appId, limit: 500 }).then(result => {
+      const events = result.data ?? []
+      // API returns newest-first; replay oldest-first to reconstruct stage state correctly
+      ;[...events].reverse().forEach(ev => applyEvent(ev))
+      setHistoryLoading(false)
+      replayingRef.current = false
+    })
+  // applyEvent is stable within a render cycle; running guards against re-fetching mid-run
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId])
 
   const isTerminal = (s: { status: StageStatus }) =>
     s.status === 'complete' || s.status === 'needs_review' || s.status === 'failed' || s.status === 'skipped'
@@ -155,22 +220,28 @@ export default function KnowledgeBaseTab() {
       if (!key) return prev
       const s = { ...prev[key] }
       const msg = (ev.message ?? '').toLowerCase()
+      const ts = ev.created_at ?? ev.timestamp ?? new Date().toISOString()
       if (ev.level === 'ERROR') {
         s.status = 'failed'
+        s.finishedAt = ts
       } else if (ev.level === 'SUCCESS') {
         s.status = msg.includes('removed') && msg.includes('review') ? 'needs_review' : 'complete'
         s.summary = ev.message ?? ''
+        s.finishedAt = ts
       } else if (s.status === 'not_started') {
         s.status = 'in_progress'
+        s.startedAt = ts
       }
       const next = applySkips({ ...prev, [key]: s })
 
-      // Close SSE stream when pipeline reaches terminal state
-      const anyFailed = next.firecrawl.status === 'failed' || next.playwright.status === 'failed' || next.graph.status === 'failed'
-      if (isTerminal(next.pom) || anyFailed) {
-        esRef.current?.close()
-        esRef.current = null
-        setRunning(false)
+      // Close SSE stream when pipeline reaches terminal state (skip during history replay)
+      if (!replayingRef.current) {
+        const anyFailed = next.firecrawl.status === 'failed' || next.playwright.status === 'failed' || next.graph.status === 'failed'
+        if (isTerminal(next.pom) || anyFailed) {
+          esRef.current?.close()
+          esRef.current = null
+          setRunning(false)
+        }
       }
       return next
     })
@@ -190,6 +261,11 @@ export default function KnowledgeBaseTab() {
 
   // Close stream on unmount
   useEffect(() => () => { esRef.current?.close() }, [])
+
+  // Auto-scroll event log to bottom whenever new events arrive
+  useEffect(() => {
+    if (logDrawerOpen) logBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [liveEvents, logDrawerOpen])
 
   const buildKnowledgeBase = async () => {
     setLocalError('')
@@ -261,6 +337,12 @@ export default function KnowledgeBaseTab() {
           {running ? 'Running…' : '▶ Build Knowledge Base'}
         </Button>
         <div style={{ flex: 1 }} />
+        {historyLoading && (
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, alignSelf: 'flex-end', marginBottom: 6 }}>
+            <Spin indicator={<LoadingOutlined style={{ fontSize: 11 }} spin />} style={{ marginRight: 6 }} />
+            Loading previous run…
+          </span>
+        )}
         <Button icon={<UnorderedListOutlined />} onClick={() => setLogOpen(true)} style={{ alignSelf: 'flex-end' }}>
           Event Log{liveEvents.length > 0 ? ` (${liveEvents.length})` : ''}
         </Button>
@@ -272,8 +354,22 @@ export default function KnowledgeBaseTab() {
 
       {/* ── Pipeline stages ── */}
       <div>
-        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
-          Pipeline Stages
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Pipeline Stages
+          </span>
+          {(() => {
+            const allStarts = PIPELINE_ORDER.map(k => stages[k].startedAt).filter(Boolean).sort()
+            const ts = allStarts[0]
+            if (!ts) return null
+            const d = new Date(ts)
+            const label = d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+            return (
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted }}>
+                · Last run <span style={{ color: C.text }}>{label}</span>
+              </span>
+            )
+          })()}
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {STAGE_DEFS.map((def, i) => <StageCard key={i} def={def} stages={stages} />)}
@@ -289,19 +385,39 @@ export default function KnowledgeBaseTab() {
 
       {/* ── Event Log Drawer ── */}
       <Drawer
-        title={<span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, color: C.text }}>Live Event Log</span>}
-        placement="right" width={560} open={logDrawerOpen} onClose={() => setLogOpen(false)}
+        title={
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, color: C.text }}>
+            Event Log
+            {liveEvents.length > 0 && (
+              <span style={{ fontSize: 11, color: C.muted, marginLeft: 10 }}>
+                {liveEvents.length} event{liveEvents.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </span>
+        }
+        placement="right" width={600} open={logDrawerOpen} onClose={() => setLogOpen(false)}
         styles={{ header: { background: C.surface, borderBottom: `1px solid ${C.border}` }, body: { background: C.surface, padding: 0 }, mask: { background: 'rgba(0,0,0,0.5)' } }}
       >
         <div style={{ background: C.surface2, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, height: '100%', overflowY: 'auto', padding: '12px 16px' }}>
           {liveEvents.length === 0
-            ? <span style={{ color: C.muted }}>Waiting for events…</span>
-            : liveEvents.map((ev, i) => (
-              <div key={i} style={{ marginBottom: 5, lineHeight: 1.6, color: levelColor(ev.level) }}>
-                [{fmtTime(ev.created_at ?? ev.timestamp)}] [{ev.stage}] {ev.message}
-              </div>
-            ))
+            ? <span style={{ color: C.muted }}>No events yet…</span>
+            : [...liveEvents]
+                .sort((a, b) => String(a.created_at ?? a.timestamp ?? '').localeCompare(String(b.created_at ?? b.timestamp ?? '')))
+                .map((ev, i) => (
+                  <div key={i} style={{ marginBottom: 4, lineHeight: 1.7, borderBottom: `1px solid ${C.border}22`, paddingBottom: 2 }}>
+                    <span style={{ color: C.muted, marginRight: 8 }}>{fmtTime(ev.created_at ?? ev.timestamp)}</span>
+                    <span style={{
+                      display: 'inline-block', minWidth: 80, marginRight: 8,
+                      color: ev.stage === 'CRAWL_C4AI' || ev.stage === 'CRAWL_PW' ? C.blue
+                           : ev.stage === 'GRAPH' ? C.amber
+                           : ev.stage === 'GENERATOR' ? C.green
+                           : C.muted,
+                    }}>[{ev.stage}]</span>
+                    <span style={{ color: levelColor(ev.level) }}>{ev.message}</span>
+                  </div>
+                ))
           }
+          <div ref={logBottomRef} />
         </div>
       </Drawer>
     </div>

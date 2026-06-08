@@ -16,6 +16,7 @@ interface GraphNode {
   title: string
   elements: GraphElement[]
   assertableElements?: string[]
+  className?: string
 }
 
 interface GraphData {
@@ -89,6 +90,16 @@ export default function GraphView({ data }: { data: GraphData }) {
             </div>
           </AntTooltip>
         </div>
+      ),
+    },
+    {
+      title: 'POM File',
+      dataIndex: 'className',
+      width: 210,
+      render: (cls: string) => (
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: cls ? C.green : C.muted }}>
+          {cls ? cls + '.java' : '—'}
+        </span>
       ),
     },
     {

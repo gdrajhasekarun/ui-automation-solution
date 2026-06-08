@@ -267,5 +267,12 @@ def generate_all(graph_path: str, output_dir: str) -> dict:
         written.append({"class": class_name, "path": file_path, "node_id": node["nodeId"]})
         logger.info(f"Generated {class_name}.java — {len(elements)} elements")
 
+    # Patch className into each graph node so the dashboard can display it
+    node_to_class = {w["node_id"]: w["class"] for w in written}
+    for node in graph.get("nodes", []):
+        node["className"] = node_to_class.get(node["nodeId"], "")
+    with open(graph_path, "w") as f:
+        json.dump(graph, f, indent=2)
+
     validation_failures = validate_all(written)
     return {"written": written, "count": len(written), "validation_failures": validation_failures}
