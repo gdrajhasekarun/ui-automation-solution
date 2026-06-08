@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Button, Input, Drawer, Spin } from 'antd'
 import { UnorderedListOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useTheme } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
 import { setAppId, setAppUrl, setFrameworkDir } from '../store/appSlice'
-import { useTriggerCrawlMutation, useGetEventsQuery, useGetGraphQuery } from '../store/api'
+import { useTriggerCrawlMutation, useGetGraphQuery } from '../store/api'
 import GraphView from './GraphView'
 import type { UiEvent } from '../types'
 
@@ -126,13 +126,13 @@ export default function KnowledgeBaseTab() {
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
 
   const [stages, setStages]         = useState<StagesState>(freshStages)
-  const [seenIds]                   = useState(() => new Set<string>())
   const [logDrawerOpen, setLogOpen] = useState(false)
-  const [polling, setPolling]       = useState(false)
+  const [running, setRunning]       = useState(false)
   const [localError, setLocalError] = useState('')
-  // Only process events emitted after the most recent trigger
-  const triggerTimeRef              = React.useRef<number>(0)
-  const [triggerSince, setTriggerSince] = useState('')
+  const [liveEvents, setLiveEvents] = useState<UiEvent[]>([])
+
+  const seenIdsRef = useRef(new Set<string>())
+  const esRef      = useRef<EventSource | null>(null)
 
   const [triggerCrawl, { isLoading: triggering, error: triggerError }] = useTriggerCrawlMutation()
 
@@ -140,68 +140,67 @@ export default function KnowledgeBaseTab() {
   const graphReady = stages.pom.status === 'complete' || stages.pom.status === 'needs_review'
   const { data: graphData } = useGetGraphQuery(appId, { skip: !appId || !graphReady })
 
-  // Poll events via RTK Query — polling active after trigger, every 2s
-  const { data: events = [] } = useGetEventsQuery(
-    { appId, limit: 200, since: triggerSince || undefined },
-    { pollingInterval: polling ? 2000 : 0, skip: !appId }
-  )
+  const isTerminal = (s: { status: StageStatus }) =>
+    s.status === 'complete' || s.status === 'needs_review' || s.status === 'failed' || s.status === 'skipped'
 
-  // Derive stage state from the RTK Query event stream
-  useEffect(() => {
-    const cutoff = triggerTimeRef.current
-    const newEvs = events.filter(ev => {
-      const ts = ev.created_at ?? ev.timestamp ?? ''
-      if (ts && new Date(ts).getTime() < cutoff) return false
-      const id = ev.event_id ?? ev.id ?? (ts + ev.message)
-      if (seenIds.has(id)) return false
-      seenIds.add(id); return true
-    })
-    if (!newEvs.length) return
+  const applyEvent = (ev: UiEvent) => {
+    const id = ev.event_id ?? ev.id ?? ((ev.created_at ?? ev.timestamp ?? '') + ev.message)
+    if (seenIdsRef.current.has(id)) return
+    seenIdsRef.current.add(id)
+
+    setLiveEvents(prev => [...prev, ev])
 
     setStages(prev => {
-      let next = { ...prev }
-      newEvs.forEach(ev => {
-        const key = EVENT_STAGE_MAP[ev.stage]
-        if (!key) return
-        const s = { ...next[key] }
-        const msg = (ev.message ?? '').toLowerCase()
-        if (ev.level === 'ERROR') {
-          s.status = 'failed'
-        } else if (ev.level === 'SUCCESS' || msg.includes('complete') || msg.includes('done')) {
-          s.status = msg.includes('removed') && msg.includes('review') ? 'needs_review' : 'complete'
-          s.summary = ev.message ?? ''
-        } else if (s.status === 'not_started') {
-          s.status = 'in_progress'
-        }
-        next = { ...next, [key]: s }
-      })
-      return applySkips(next)
-    })
-  }, [events, seenIds])
+      const key = EVENT_STAGE_MAP[ev.stage]
+      if (!key) return prev
+      const s = { ...prev[key] }
+      const msg = (ev.message ?? '').toLowerCase()
+      if (ev.level === 'ERROR') {
+        s.status = 'failed'
+      } else if (ev.level === 'SUCCESS') {
+        s.status = msg.includes('removed') && msg.includes('review') ? 'needs_review' : 'complete'
+        s.summary = ev.message ?? ''
+      } else if (s.status === 'not_started') {
+        s.status = 'in_progress'
+      }
+      const next = applySkips({ ...prev, [key]: s })
 
-  // Stop polling once the pipeline reaches a terminal state
-  useEffect(() => {
-    if (!polling) return
-    const isTerminal = (s: { status: StageStatus }) =>
-      s.status === 'complete' || s.status === 'needs_review' || s.status === 'failed' || s.status === 'skipped'
-    if (
-      isTerminal(stages.pom) ||
-      (isTerminal(stages.firecrawl) && isTerminal(stages.playwright) && isTerminal(stages.graph))
-    ) {
-      setPolling(false)
+      // Close SSE stream when pipeline reaches terminal state
+      const anyFailed = next.firecrawl.status === 'failed' || next.playwright.status === 'failed' || next.graph.status === 'failed'
+      if (isTerminal(next.pom) || anyFailed) {
+        esRef.current?.close()
+        esRef.current = null
+        setRunning(false)
+      }
+      return next
+    })
+  }
+
+  // Open SSE connection after trigger
+  const openStream = (since: string) => {
+    esRef.current?.close()
+    const url = `/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`
+    const es = new EventSource(url)
+    esRef.current = es
+    es.onmessage = (e) => {
+      try { applyEvent(JSON.parse(e.data) as UiEvent) } catch { /* ignore malformed */ }
     }
-  }, [stages, polling])
+    es.onerror = () => { /* EventSource auto-reconnects via Last-Event-ID */ }
+  }
+
+  // Close stream on unmount
+  useEffect(() => () => { esRef.current?.close() }, [])
 
   const buildKnowledgeBase = async () => {
     setLocalError('')
     if (!appId.trim())  { setLocalError('App ID is required.');  return }
     if (!appUrl.trim()) { setLocalError('App URL is required.'); return }
-    seenIds.clear()
+    seenIdsRef.current.clear()
     setStages(freshStages())
-    const sinceMs = Date.now() - 5000  // 5s grace for clock skew
-    triggerTimeRef.current = sinceMs
-    setTriggerSince(new Date(sinceMs).toISOString())
-    setPolling(true)
+    setLiveEvents([])
+    const since = new Date(Date.now() - 5000).toISOString()  // 5s grace for clock skew
+    setRunning(true)
+    openStream(since)
     try {
       await triggerCrawl({
         app_id: appId.trim(), app_url: appUrl.trim(),
@@ -211,7 +210,9 @@ export default function KnowledgeBaseTab() {
     } catch (e: unknown) {
       const msg = (e as { data?: { detail?: string }; error?: string })
       setLocalError(msg?.data?.detail ?? msg?.error ?? 'Trigger failed')
-      setPolling(false)
+      esRef.current?.close()
+      esRef.current = null
+      setRunning(false)
     }
   }
 
@@ -233,7 +234,7 @@ export default function KnowledgeBaseTab() {
   }
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
 
 
       {/* ── Inputs ── */}
@@ -252,16 +253,16 @@ export default function KnowledgeBaseTab() {
         </div>
         <Button
           type="primary"
-          loading={triggering || polling}
-          disabled={triggering || polling}
+          loading={triggering || running}
+          disabled={triggering || running}
           onClick={buildKnowledgeBase}
           style={{ alignSelf: 'flex-end' }}
         >
-          {polling ? 'Running…' : '▶ Build Knowledge Base'}
+          {running ? 'Running…' : '▶ Build Knowledge Base'}
         </Button>
         <div style={{ flex: 1 }} />
         <Button icon={<UnorderedListOutlined />} onClick={() => setLogOpen(true)} style={{ alignSelf: 'flex-end' }}>
-          Event Log{events.length > 0 ? ` (${events.length})` : ''}
+          Event Log{liveEvents.length > 0 ? ` (${liveEvents.length})` : ''}
         </Button>
       </div>
 
@@ -279,9 +280,9 @@ export default function KnowledgeBaseTab() {
         </div>
       </div>
 
-      {/* ── Site Graph ── */}
+      {/* ── Site Knowledge Table ── */}
       {graphData && (
-        <div style={{ marginTop: 32 }}>
+        <div style={{ marginTop: 32, flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <GraphView data={graphData as Parameters<typeof GraphView>[0]['data']} />
         </div>
       )}
@@ -293,9 +294,9 @@ export default function KnowledgeBaseTab() {
         styles={{ header: { background: C.surface, borderBottom: `1px solid ${C.border}` }, body: { background: C.surface, padding: 0 }, mask: { background: 'rgba(0,0,0,0.5)' } }}
       >
         <div style={{ background: C.surface2, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, height: '100%', overflowY: 'auto', padding: '12px 16px' }}>
-          {events.length === 0
+          {liveEvents.length === 0
             ? <span style={{ color: C.muted }}>Waiting for events…</span>
-            : (events as UiEvent[]).map((ev, i) => (
+            : liveEvents.map((ev, i) => (
               <div key={i} style={{ marginBottom: 5, lineHeight: 1.6, color: levelColor(ev.level) }}>
                 [{fmtTime(ev.created_at ?? ev.timestamp)}] [{ev.stage}] {ev.message}
               </div>

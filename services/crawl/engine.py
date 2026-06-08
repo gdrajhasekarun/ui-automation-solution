@@ -3,8 +3,6 @@ import logging
 import os
 from urllib.parse import urlparse
 
-import httpx
-
 from config import SHARED_DIR
 import crawl4ai_phase
 import playwright_phase
@@ -57,7 +55,7 @@ def merge_crawl_output(c4ai_pages: list, pw_pages: list) -> list:
 async def run_crawl(
     app_url: str,
     app_id: str,
-    run_id: str,
+    run_id: str,  # reserved for future run tracking
     seed_data: dict,
     dashboard_url: str,
 ) -> dict:
@@ -81,7 +79,7 @@ async def run_crawl(
 
     logger.info(f"Crawl output written to {output_path}")
 
-    graph = build_graph(output_path, app_id)
+    graph = await build_graph(output_path, app_id, dashboard_url)
 
     return {
         "pages_discovered": len(page_inventory),

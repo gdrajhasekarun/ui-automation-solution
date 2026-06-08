@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -7,12 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import CRAWL_URL, EXECUTOR_URL, GENERATOR_URL, PLANNER_URL, PORT
-from db import db_emit_event, db_get, db_insert, db_list, db_list_since, db_update
+from db import (db_emit_event, db_get, db_insert, db_list, db_list_after_rowid,
+                db_list_since, db_rowid_before_since, db_update)
 from models import (CrawlTriggerBody, EventBody, ExecuteResultsBody,
                     ExecuteRunBody, PlanRunBody)
 
@@ -72,6 +74,36 @@ def get_events(app_id: str, limit: int = 200, since: str = ""):
     return {"events": list(reversed(events))}
 
 
+@app.get("/api/events/{app_id}/stream")
+async def stream_events(request: Request, app_id: str, since: str = ""):
+    """SSE endpoint — streams events as they arrive, replaying from `since` first."""
+    # Resume from Last-Event-ID if the browser reconnects, else resolve from `since` timestamp
+    last_event_id_header = request.headers.get("last-event-id", "")
+    if last_event_id_header.isdigit():
+        cursor = int(last_event_id_header)
+    elif since:
+        cursor = db_rowid_before_since("ui_events", app_id, since)
+    else:
+        cursor = 0
+
+    async def generate():
+        nonlocal cursor
+        while True:
+            if await request.is_disconnected():
+                break
+            rows = db_list_after_rowid("ui_events", app_id, cursor)
+            for rowid, ev in rows:
+                cursor = rowid
+                yield f"id: {rowid}\ndata: {json.dumps(ev)}\n\n"
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
 @app.post("/api/crawl/trigger")
 async def crawl_trigger(body: CrawlTriggerBody):
     build_id = body.build_id or "build-" + uuid.uuid4().hex[:8]
@@ -91,7 +123,8 @@ async def crawl_trigger(body: CrawlTriggerBody):
                 "app_id": body.app_id,
                 "app_url": body.app_url,
                 "build_id": build_id,
-                "trigger_type": body.trigger_type
+                "trigger_type": body.trigger_type,
+                "framework_dir": body.framework_dir,
             })
             data = resp.json()
     except Exception as e:

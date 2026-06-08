@@ -1,13 +1,5 @@
-import React, { useCallback, useMemo } from 'react'
-import {
-  ReactFlow, Background, Controls, MiniMap,
-  type Node, type Edge, type NodeProps,
-  Handle, Position, useNodesState, useEdgesState,
-  BackgroundVariant,
-} from '@xyflow/react'
-import '@xyflow/react/dist/style.css'
-import dagre from 'dagre'
-import { Tooltip } from 'antd'
+import React, { useMemo } from 'react'
+import { Table, Tooltip as AntTooltip } from 'antd'
 import { useTheme } from '../theme'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,179 +15,203 @@ interface GraphNode {
   url: string
   title: string
   elements: GraphElement[]
-}
-
-interface GraphEdge {
-  edgeId: string
-  fromNodeId: string
-  toNodeId: string
-  label?: string
-  actionType?: string
+  assertableElements?: string[]
 }
 
 interface GraphData {
   nodes: GraphNode[]
-  edges: GraphEdge[]
-  meta?: { totalNodes?: number; totalEdges?: number }
+  edges: { edgeId: string; fromNodeId: string; toNodeId: string; selectorKey?: string | null; label?: string; actionType?: string }[]
+  meta?: { totalNodes?: number; totalEdges?: number; appId?: string; crawledAt?: string }
 }
 
-// ── Dagre layout ──────────────────────────────────────────────────────────────
-const NODE_W = 160
-const NODE_H = 48
-
-function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
-  const g = new dagre.graphlib.Graph()
-  g.setDefaultEdgeLabel(() => ({}))
-  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 80, marginx: 20, marginy: 20 })
-  nodes.forEach(n => g.setNode(n.id, { width: NODE_W, height: NODE_H }))
-  edges.forEach(e => g.setEdge(e.source, e.target))
-  dagre.layout(g)
-  return nodes.map(n => {
-    const pos = g.node(n.id)
-    return { ...n, position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 } }
-  })
+// ── Colour helpers ────────────────────────────────────────────────────────────
+const ACTION_COLOR: Record<string, string> = {
+  fill:   '#7dd3fc',
+  select: '#86efac',
+  click:  '#fbbf24',
+  check:  '#c4b5fd',
 }
+function actionColor(a: string) { return ACTION_COLOR[a] ?? '#8B949E' }
 
-// ── Custom node ───────────────────────────────────────────────────────────────
-function PageNode({ data }: NodeProps) {
-  const { C } = useTheme()
-  const nodeData = data as { label: string; elements: GraphElement[]; url: string }
-  const tooltipContent = (
-    <div style={{ maxWidth: 320, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>
-      <div style={{ fontWeight: 700, marginBottom: 6, color: '#fff', fontSize: 12 }}>{nodeData.label}</div>
-      <div style={{ color: '#aaa', marginBottom: 8, wordBreak: 'break-all', fontSize: 10 }}>{nodeData.url}</div>
-      {nodeData.elements.length === 0
-        ? <div style={{ color: '#888' }}>No interactable elements</div>
-        : nodeData.elements.map((el, i) => (
-          <div key={i} style={{ marginBottom: 4, borderBottom: '1px solid #333', paddingBottom: 4 }}>
-            <span style={{ color: el.actionType === 'fill' ? '#7dd3fc' : el.actionType === 'select' ? '#86efac' : '#fbbf24' }}>
-              {el.actionType}
-            </span>
-            <span style={{ color: '#ccc', marginLeft: 6 }}>{el.name || el.selectorKey}</span>
-            <div style={{ color: '#666', fontSize: 10, marginTop: 1 }}>{el.selectorKey}</div>
-          </div>
-        ))
-      }
-    </div>
-  )
-
-  return (
-    <Tooltip title={tooltipContent} placement="right" color="#1a1a2e" overlayStyle={{ maxWidth: 360 }}>
-      <div style={{
-        background: C.surface2,
-        border: `1px solid ${nodeData.elements.length > 0 ? C.inProgress + '99' : C.border}`,
-        borderRadius: 6,
-        padding: '6px 12px',
-        width: NODE_W,
-        height: NODE_H,
-        display: 'flex',
-        alignItems: 'center',
-        cursor: 'pointer',
-        transition: 'border-color 0.2s, background 0.2s',
-        overflow: 'hidden',
-      }}>
-        <Handle type="target" position={Position.Left} style={{ background: C.muted, width: 6, height: 6 }} />
-        <div style={{ overflow: 'hidden' }}>
-          <div style={{
-            fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600,
-            color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {nodeData.label}
-          </div>
-          <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>
-            {nodeData.elements.length} element{nodeData.elements.length !== 1 ? 's' : ''}
-          </div>
-        </div>
-        <Handle type="source" position={Position.Right} style={{ background: C.muted, width: 6, height: 6 }} />
-      </div>
-    </Tooltip>
-  )
+function elementCountColor(count: number, C: ReturnType<typeof useTheme>['C']) {
+  if (count === 0) return C.muted
+  if (count <= 4)  return C.blue
+  if (count <= 9)  return C.amber
+  return C.green
 }
-
-const nodeTypes = { page: PageNode }
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function GraphView({ data }: { data: GraphData }) {
   const { C } = useTheme()
-
-  const { flowNodes, flowEdges } = useMemo(() => {
-    const rawNodes: Node[] = (data.nodes || []).map(n => ({
-      id: n.nodeId,
-      type: 'page',
-      position: { x: 0, y: 0 },
-      data: { label: n.title || n.url, elements: n.elements || [], url: n.url },
-    }))
-
-    // Deduplicate edges — dagre crashes on parallel edges
-    const seen = new Set<string>()
-    const rawEdges: Edge[] = []
-    ;(data.edges || []).forEach(e => {
-      const key = `${e.fromNodeId}→${e.toNodeId}`
-      if (seen.has(key) || e.fromNodeId === e.toNodeId) return
-      seen.add(key)
-      rawEdges.push({
-        id: e.edgeId,
-        source: e.fromNodeId,
-        target: e.toNodeId,
-        type: 'default',
-        animated: false,
-        style: { stroke: C.border, strokeWidth: 1 },
-      })
-    })
-
-    const laid = applyDagreLayout(rawNodes, rawEdges)
-    return { flowNodes: laid, flowEdges: rawEdges }
-  }, [data, C.border])
-
-  const [nodes, , onNodesChange] = useNodesState(flowNodes)
-  const [edges, , onEdgesChange] = useEdgesState(flowEdges)
-
-  const onInit = useCallback((instance: { fitView: () => void }) => {
-    setTimeout(() => instance.fitView(), 50)
-  }, [])
-
+  const nodes = data.nodes || []
   const meta = data.meta
+
+  const rows = useMemo(() =>
+    [...nodes]
+      .sort((a, b) => (b.elements?.length ?? 0) - (a.elements?.length ?? 0))
+      .map((n, i) => ({ ...n, key: n.nodeId, idx: i + 1 })),
+    [nodes]
+  )
+
+  const tagStyle = (action: string): React.CSSProperties => ({
+    fontFamily: "'IBM Plex Mono',monospace",
+    fontSize: 10,
+    color: actionColor(action),
+    background: actionColor(action) + '22',
+    border: `1px solid ${actionColor(action)}55`,
+    borderRadius: 4,
+    padding: '1px 6px',
+    marginRight: 3,
+    marginBottom: 2,
+    display: 'inline-block',
+  })
+
+  const columns = [
+    {
+      title: '#',
+      dataIndex: 'idx',
+      width: 44,
+      render: (v: number) => (
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted }}>{v}</span>
+      ),
+    },
+    {
+      title: 'Page',
+      dataIndex: 'title',
+      render: (_: string, row: GraphNode & { idx: number }) => (
+        <div>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>
+            {row.title || '(untitled)'}
+          </div>
+          <AntTooltip title={row.url}>
+            <div style={{ fontSize: 11, color: C.muted, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {row.url}
+            </div>
+          </AntTooltip>
+        </div>
+      ),
+    },
+    {
+      title: 'Elements',
+      dataIndex: 'elements',
+      width: 90,
+      render: (els: GraphElement[]) => (
+        <span style={{
+          fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700,
+          color: elementCountColor(els?.length ?? 0, C),
+        }}>
+          {els?.length ?? 0}
+        </span>
+      ),
+      sorter: (a: GraphNode, b: GraphNode) => (a.elements?.length ?? 0) - (b.elements?.length ?? 0),
+      defaultSortOrder: 'descend' as const,
+    },
+    {
+      title: 'Action breakdown',
+      dataIndex: 'elements',
+      render: (els: GraphElement[]) => {
+        if (!els?.length) return <span style={{ color: C.muted, fontSize: 11 }}>—</span>
+        const counts: Record<string, number> = {}
+        els.forEach(e => { counts[e.actionType] = (counts[e.actionType] ?? 0) + 1 })
+        return (
+          <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+            {Object.entries(counts).map(([action, cnt]) => (
+              <span key={action} style={tagStyle(action)}>{action} ×{cnt}</span>
+            ))}
+          </div>
+        )
+      },
+    },
+  ]
+
+  const expandedRowRender = (row: GraphNode) => {
+    if (!row.elements?.length) {
+      return <span style={{ color: C.muted, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace" }}>No interactable elements found on this page.</span>
+    }
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 0' }}>
+        {row.elements.map((el, i) => (
+          <AntTooltip key={i} title={<span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>{el.selectorKey}</span>} color="#1a1a2e">
+            <div style={{
+              background: C.surface,
+              border: `1px solid ${actionColor(el.actionType)}44`,
+              borderRadius: 6,
+              padding: '5px 10px',
+              cursor: 'default',
+              minWidth: 130,
+            }}>
+              <div style={{ fontSize: 10, color: actionColor(el.actionType), fontFamily: "'IBM Plex Mono',monospace", marginBottom: 1 }}>
+                {el.actionType} · {el.role}
+              </div>
+              <div style={{ fontSize: 12, color: C.text, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 500 }}>
+                {el.name || el.selectorKey}
+              </div>
+            </div>
+          </AntTooltip>
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12,
-        fontFamily: "'IBM Plex Mono',monospace",
-      }}>
-        <span style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Site Graph
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Site Knowledge
         </span>
         {meta && (
-          <>
-            <span style={{ fontSize: 11, color: C.muted }}>
-              {meta.totalNodes} pages · {meta.totalEdges} links
-            </span>
-          </>
+          <span style={{ fontSize: 11, color: C.muted }}>
+            {meta.totalNodes} pages · {meta.totalEdges} links
+            {meta.crawledAt && (
+              <span style={{ marginLeft: 8, fontSize: 10 }}>
+                · crawled {new Date(meta.crawledAt).toLocaleString()}
+              </span>
+            )}
+          </span>
         )}
-        <span style={{ fontSize: 10, color: C.muted, marginLeft: 'auto' }}>
-          Hover a node to see its elements
-        </span>
+        {/* Action legend */}
+        <div style={{ display: 'flex', gap: 12, marginLeft: 8 }}>
+          {Object.entries(ACTION_COLOR).map(([action, color]) => (
+            <span key={action} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color }}>
+              ● {action}
+            </span>
+          ))}
+        </div>
       </div>
-      <div style={{ height: 520, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', background: C.surface }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          nodeTypes={nodeTypes}
-          onInit={onInit}
-          fitView
-          minZoom={0.1}
-          maxZoom={2}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color={C.border} variant={BackgroundVariant.Dots} gap={20} size={1} />
-          <Controls style={{ background: C.surface2, border: `1px solid ${C.border}` }} />
-          <MiniMap
-            nodeColor={() => C.inProgress + '88'}
-            maskColor={C.surface + 'cc'}
-            style={{ background: C.surface2, border: `1px solid ${C.border}` }}
-          />
-        </ReactFlow>
+
+      {/* Summary stat chips */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        {[
+          { label: 'Total pages',    value: nodes.length },
+          { label: 'With elements',  value: nodes.filter(n => (n.elements?.length ?? 0) > 0).length },
+          { label: 'Total elements', value: nodes.reduce((s, n) => s + (n.elements?.length ?? 0), 0) },
+          { label: 'Fill inputs',    value: nodes.reduce((s, n) => s + (n.elements?.filter(e => e.actionType === 'fill').length ?? 0), 0) },
+          { label: 'Selects',        value: nodes.reduce((s, n) => s + (n.elements?.filter(e => e.actionType === 'select').length ?? 0), 0) },
+          { label: 'Clickables',     value: nodes.reduce((s, n) => s + (n.elements?.filter(e => e.actionType === 'click').length ?? 0), 0) },
+        ].map(({ label, value }) => (
+          <div key={label} style={{
+            background: C.surface2, border: `1px solid ${C.border}`,
+            borderRadius: 6, padding: '6px 14px', textAlign: 'center',
+          }}>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, fontWeight: 700, color: C.text }}>{value}</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: C.muted, marginTop: 1 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pages table — fills remaining height, single scrollbar on table body */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Table
+          dataSource={rows}
+          columns={columns}
+          expandable={{ expandedRowRender, rowExpandable: () => true }}
+          size="small"
+          pagination={false}
+          scroll={{ y: '100%' }}
+          rowKey="nodeId"
+          style={{ fontFamily: "'IBM Plex Mono',monospace", height: '100%' }}
+        />
       </div>
     </div>
   )

@@ -14,6 +14,7 @@ class CrawlTriggerBody(BaseModel):
     app_url: str = ""
     build_id: str = ""
     trigger_type: str = "INITIAL"
+    framework_dir: str = ""
 
 
 class PlanRunBody(BaseModel):

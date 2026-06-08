@@ -154,26 +154,48 @@ def _extract_elements_from_html(html: str) -> list[dict]:
                 return val
         return default
 
-    def best_selector(tag) -> tuple[str, str] | None:
-        """Return (css_selector, label) using the most stable attribute."""
+    _UNSTABLE_CLASSES = {"active", "disabled", "hover", "focus", "selected", "open", "closed", "visible", "hidden"}
+
+    def all_properties(tag) -> list[dict]:
+        """Collect all available locator properties in stability order."""
+        props = []
         eid = _attr(tag, "id")
         if eid:
-            return f"#{eid}", eid
+            props.append({"type": "id", "value": eid})
         dt = _attr(tag, "data-testid", "data-test-id")
         if dt:
-            return f'[data-testid="{dt}"]', dt
+            props.append({"type": "data-testid", "value": dt})
         nm = _attr(tag, "name")
         if nm:
-            return f'[name="{nm}"]', nm
+            props.append({"type": "name", "value": nm})
         ph = _attr(tag, "placeholder")
         if ph:
-            return f'[placeholder="{ph}"]', ph
+            props.append({"type": "placeholder", "value": ph})
+        al = _attr(tag, "aria-label")
+        if al and len(al) < 80:
+            props.append({"type": "aria-label", "value": al.strip()})
+        cls_raw = _attr(tag, "class")
+        if cls_raw:
+            stable = [c for c in cls_raw.split() if c.lower() not in _UNSTABLE_CLASSES]
+            if stable:
+                props.append({"type": "css-class", "value": " ".join(stable)})
+        return props
+
+    def selector_from_prop(prop: dict) -> str | None:
+        t, v = prop["type"], prop["value"]
+        if t == "id":           return f"#{v}"
+        if t == "data-testid":  return f'[data-testid="{v}"]'
+        if t == "name":         return f'[name="{v}"]'
+        if t == "placeholder":  return f'[placeholder="{v}"]'
         return None
 
     def best_label(tag) -> str:
         al = _attr(tag, "aria-label")
         if al and len(al) < 60:
             return al
+        # For <select>, inner text is concatenated option values — use name/id instead
+        if tag.name == "select":
+            return _attr(tag, "name") or _attr(tag, "id")
         txt = tag.get_text(separator=" ", strip=True)[:60]
         if txt:
             return txt
@@ -183,21 +205,26 @@ def _extract_elements_from_html(html: str) -> list[dict]:
         return _attr(tag, "type", default=tag.name)
 
     def push(tag, action: str, role: str):
-        sel_label = best_selector(tag)
+        props = all_properties(tag)
+        primary = props[0] if props else None
         label = best_label(tag)
         if not label or is_noise(label):
             return
-        sel = sel_label[0] if sel_label else f'xpath=//{tag.name}[normalize-space()="{label}"]'
-        if sel in seen:
+        dedupe_key = f"{primary['type']}:{primary['value']}" if primary else f"text:{label}"
+        if dedupe_key in seen:
             return
-        seen.add(sel)
+        seen.add(dedupe_key)
+        sel = selector_from_prop(primary) if primary else None
+        selector_key = sel or f'xpath=//{tag.name}[normalize-space()="{label}"]'
         elements.append({
             "role": role,
             "name": label,
-            "selectorKey": sel,
+            "selectorKey": selector_key,
             "actionType": action,
             "isInteractable": True,
             "frameContext": None,
+            "primary": primary,
+            "properties": props[1:],
         })
 
     # inputs
@@ -322,5 +349,10 @@ async def _crawl_pages(
             f"Crawl4AI: {len(pages_discovered)} pages discovered (depth ≤{max_depth}, cap {max_pages})..."
         )
 
+    await _notify(
+        dashboard_url, app_id,
+        f"Page discovery complete — {len(pages_discovered)} pages crawled",
+        "SUCCESS",
+    )
     logger.info(f"Crawl4AI phase complete — {len(pages_discovered)} pages")
     return pages_discovered

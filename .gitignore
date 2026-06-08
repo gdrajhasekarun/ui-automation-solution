@@ -26,7 +26,8 @@ shared/java/src/test/resources/testdata.xlsx
 
 # Generated pipeline outputs
 shared/outputs/
-framework/src/main/java/pages/
+*/src/main/java/pages/
+*/target/
 
 # macOS
 .DS_Store

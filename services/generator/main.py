@@ -60,6 +60,7 @@ async def _run_generation(job_id: str, app_id: str, trigger_type: str, framework
         graph_path = os.path.join(out_dir, "graph.json")
         diff_path = os.path.join(out_dir, "diff_report.json")
         pages_dir = os.path.join(java_dir, "src", "main", "java", "pages")
+        logger.info(f"framework_dir received='{framework_dir}' → resolved pages_dir='{pages_dir}'")
 
         if trigger_type == "INITIAL" or not os.path.exists(diff_path):
             result = generate_all(graph_path, pages_dir)
@@ -68,6 +69,17 @@ async def _run_generation(job_id: str, app_id: str, trigger_type: str, framework
 
         _jobs[job_id]["classes_written"] = result.get("count", result.get("added_classes", 0))
 
+        # Report validation issues per file before proceeding
+        validation_failures: dict = result.get("validation_failures", {})
+        if validation_failures:
+            total_errors = sum(len(v) for v in validation_failures.values())
+            bad_files = ", ".join(os.path.basename(p) for p in validation_failures)
+            await _notify(app_id, "GENERATOR",
+                f"Validation: {total_errors} issue(s) in {len(validation_failures)} file(s): {bad_files}", "WARN")
+            for fpath, errs in validation_failures.items():
+                for err in errs:
+                    await _notify(app_id, "GENERATOR", f"  {os.path.basename(fpath)}: {err}", "WARN")
+
         reg = generate_registry(graph_path, java_dir, app_id)
         _jobs[job_id]["methods_written"] = reg["count"]
 
@@ -75,9 +87,10 @@ async def _run_generation(job_id: str, app_id: str, trigger_type: str, framework
         needs_review_count = len(recon.get("needs_review", []))
         _jobs[job_id]["needs_review_count"] = needs_review_count
 
+        valid_tag = f", {len(validation_failures)} file(s) with validation issues" if validation_failures else ""
         await _notify(app_id, "GENERATOR",
             f"Generation complete — {_jobs[job_id]['classes_written']} classes, "
-            f"{reg['count']} methods, {needs_review_count} need review",
+            f"{reg['count']} methods, {needs_review_count} need review{valid_tag}",
             "SUCCESS")
 
         _jobs[job_id]["status"] = "done"
@@ -99,7 +112,7 @@ async def trigger(body: dict, background_tasks: BackgroundTasks):
     _jobs[job_id] = {"status": "started", "classes_written": 0, "methods_written": 0, "needs_review_count": 0}
 
     framework_dir = body.get("framework_dir", "")
-    logger.info(f"Generator service activated — processing graph for {app_id}")
+    logger.info(f"Generator triggered — app_id={app_id} framework_dir='{framework_dir}'")
     background_tasks.add_task(_run_generation, job_id, app_id, trigger_type, framework_dir)
     return {"job_id": job_id, "status": "STARTED"}
 

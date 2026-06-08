@@ -86,7 +86,7 @@ def db_get(table: str, pk_col: str, pk_val) -> dict | None:
     return dict(row) if row else None
 
 
-def db_list(table: str, where: str = "", params: list = None, limit: int = 100) -> list[dict]:
+def db_list(table: str, where: str = "", params: list | None = None, limit: int = 100) -> list[dict]:
     db = get_db()
     query = f"SELECT * FROM {table}"
     if where:
@@ -103,6 +103,32 @@ def db_list_since(table: str, app_id: str, since: str, limit: int = 200) -> list
         [app_id, since, limit],
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def db_rowid_before_since(table: str, app_id: str, since: str) -> int:
+    """Return the highest rowid of events written strictly before `since` (ISO timestamp).
+    Returns 0 if none found — meaning stream from the beginning."""
+    db = get_db()
+    row = db.execute(
+        f"SELECT MAX(rowid) FROM {table} WHERE app_id = ? AND created_at < ?",
+        [app_id, since],
+    ).fetchone()
+    return row[0] or 0
+
+
+def db_list_after_rowid(table: str, app_id: str, after_rowid: int, limit: int = 100) -> list[tuple[int, dict]]:
+    """Return (rowid, event_dict) tuples for rows inserted after `after_rowid`, oldest-first."""
+    db = get_db()
+    rows = db.execute(
+        f"SELECT rowid, * FROM {table} WHERE app_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT ?",
+        [app_id, after_rowid, limit],
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        rid = d.pop("rowid")
+        result.append((rid, d))
+    return result
 
 
 def db_emit_event(app_id: str, stage: str, message: str, level: str = "INFO"):

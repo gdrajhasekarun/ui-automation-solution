@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import re
 
 import httpx
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -88,44 +90,74 @@ async def _extract_elements(page: Page) -> list[dict]:
         const results = [];
         const seen = new Set();
 
-        function bestSelector(el) {
-            if (el.id) return { sel: '#' + CSS.escape(el.id), label: el.id };
+        // Collect ALL available locator properties in priority order
+        function allProperties(el) {
+            const props = [];
+            if (el.id)
+                props.push({ type: 'id', value: el.id });
             const dt = el.getAttribute('data-testid') || el.getAttribute('data-test-id');
-            if (dt) return { sel: '[data-testid="' + dt + '"]', label: dt };
+            if (dt)
+                props.push({ type: 'data-testid', value: dt });
             const nm = el.getAttribute('name');
-            if (nm) return { sel: '[name="' + nm + '"]', label: nm };
+            if (nm)
+                props.push({ type: 'name', value: nm });
             const ph = el.getAttribute('placeholder');
-            if (ph) return { sel: '[placeholder="' + ph + '"]', label: ph };
+            if (ph)
+                props.push({ type: 'placeholder', value: ph });
+            const al = el.getAttribute('aria-label');
+            if (al && al.length < 80)
+                props.push({ type: 'aria-label', value: al.trim() });
+            const cls = el.getAttribute('class');
+            if (cls) {
+                const stable = cls.trim().split(/\s+/).filter(c => !/^(active|disabled|hover|focus|selected|open|closed|visible|hidden)$/i.test(c));
+                if (stable.length)
+                    props.push({ type: 'css-class', value: stable.join(' ') });
+            }
+            return props;
+        }
+
+        function selectorFromProp(prop) {
+            if (prop.type === 'id')           return '#' + CSS.escape(prop.value);
+            if (prop.type === 'data-testid')  return '[data-testid="' + prop.value + '"]';
+            if (prop.type === 'name')         return '[name="' + prop.value + '"]';
+            if (prop.type === 'placeholder')  return '[placeholder="' + prop.value + '"]';
             return null;
         }
 
         function bestLabel(el) {
-            // aria-label first (if short and specific)
             const al = el.getAttribute('aria-label') || '';
             if (al && al.length < 60) return al;
-            // For links/buttons use visible text
+            // For <select>, innerText is concatenated option values — use name/id instead
+            if (el.tagName === 'SELECT') {
+                return el.getAttribute('name') || el.getAttribute('id') || '';
+            }
             const txt = (el.innerText || el.textContent || '').trim().slice(0, 60);
             if (txt) return txt;
-            // value for submit buttons
             const val = el.getAttribute('value') || '';
             if (val) return val;
             return el.getAttribute('type') || el.tagName.toLowerCase();
         }
 
         function push(el, actionType, role) {
-            const sel = bestSelector(el);
+            const props = allProperties(el);
+            const primary = props[0] || null;
             const label = bestLabel(el);
             if (!label) return;
-            const key = sel ? sel.sel : ('text=' + label);
-            if (seen.has(key)) return;
-            seen.add(key);
+            const dedupeKey = primary ? (primary.type + ':' + primary.value) : ('text:' + label);
+            if (seen.has(dedupeKey)) return;
+            seen.add(dedupeKey);
+            const selectorKey = primary
+                ? (selectorFromProp(primary) || ('xpath=//' + el.tagName.toLowerCase() + '[normalize-space()="' + label + '"]'))
+                : ('xpath=//button[normalize-space()="' + label + '"]');
             results.push({
                 role: role,
                 name: label,
-                selectorKey: sel ? sel.sel : ('xpath=//button[normalize-space()="' + label + '"]'),
+                selectorKey: selectorKey,
                 actionType: actionType,
                 isInteractable: true,
                 frameContext: null,
+                primary: primary,
+                properties: props.slice(1),
             });
         }
 
@@ -182,10 +214,23 @@ async def _extract_elements(page: Page) -> list[dict]:
     return elements
 
 
+# Only real HTTP error responses — generic/empty titles mean JS hasn't rendered yet, not an error
 _ERROR_TITLES = {
-    "error page", "access denied", "page not found", "404", "403", "500",
-    "service unavailable", "forbidden", "unauthorized", "page", "",
+    "error page", "access denied", "page not found",
+    "404", "403", "500", "service unavailable", "forbidden", "unauthorized",
 }
+
+_TITLE_FROM_URL_RE = re.compile(r'[^a-zA-Z0-9]+')
+
+
+def _derive_title(url: str) -> str:
+    """Fallback title from the last meaningful URL path segment."""
+    from urllib.parse import urlparse
+    parts = [p for p in urlparse(url).path.strip("/").split("/") if p]
+    if parts:
+        last = parts[-1].rsplit(".", 1)[0]  # strip .html
+        return " ".join(w.capitalize() for w in _TITLE_FROM_URL_RE.split(last) if w)
+    return url
 
 
 async def _trace_page(page: Page, url: str, dashboard_url: str, app_id: str) -> dict | None:
@@ -197,13 +242,17 @@ async def _trace_page(page: Page, url: str, dashboard_url: str, app_id: str) -> 
         except Exception:
             pass  # networkidle timeout is fine; domcontentloaded already succeeded
 
-        title = await page.title()
+        title = (await page.title()).strip()
 
-        # Skip server-side error pages — no point generating POM classes for them
-        if title.strip().lower() in _ERROR_TITLES:
+        # Skip only real HTTP error pages — empty/generic titles mean JS hasn't rendered,
+        # so fall back to a URL-derived title and continue tracing
+        if title.lower() in _ERROR_TITLES:
             logger.info(f"Skipping error page: {title} ({url})")
             await _notify(dashboard_url, app_id, f"Skipped error page: {url}")
             return None
+
+        if not title or title.lower() in ("page", "untitled", "loading..."):
+            title = _derive_title(url)
 
         elements = await _extract_elements(page)
         transitions = [
@@ -231,6 +280,9 @@ async def _trace_page(page: Page, url: str, dashboard_url: str, app_id: str) -> 
         return None
 
 
+_TRACE_CONCURRENCY = 4
+
+
 async def trace_interactions(
     page_inventory: list[dict],
     app_id: str,
@@ -239,50 +291,47 @@ async def trace_interactions(
 ) -> list[dict]:
     app_url = seed_data.get("appUrl", "")
     blocklist = seed_data.get("blocklist", [])
-    traced: list[dict] = []
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
+        # Single shared context so auth cookies/session are available to all parallel pages
         context = await browser.new_context()
-        page = await context.new_page()
-
-        await _authenticate(page, context, seed_data, app_url)
+        auth_page = await context.new_page()
+        await _authenticate(auth_page, context, seed_data, app_url)
+        await auth_page.close()
         await _notify(dashboard_url, app_id, "Playwright authentication complete")
 
         if not page_inventory:
-            # Fallback — Crawl4AI returned nothing; do navigation-by-clicking discovery
             await _notify(
                 dashboard_url, app_id,
                 "Crawl4AI returned 0 pages — falling back to Playwright-only discovery", "WARN"
             )
             logger.warning("Crawl4AI returned 0 pages — falling back to Playwright-only discovery")
-            urls_to_visit = [app_url] if app_url else []
-            visited: set[str] = set()
-            queue = list(urls_to_visit)
-            while queue:
-                url = queue.pop(0)
-                if url in visited or any(b in url for b in blocklist):
-                    continue
-                visited.add(url)
-                result = await _trace_page(page, url, dashboard_url, app_id)
-                if result:
-                    traced.append(result)
-                    # Discover new URLs via transitions
-                    for t in result.get("transitions", []):
-                        href = t.get("toUrl", "")
-                        if href and href not in visited and not any(b in href for b in blocklist):
-                            queue.append(href)
+            urls_to_trace = [app_url] if app_url else []
         else:
-            visited = set()
+            seen_urls: set[str] = set()
+            urls_to_trace = []
             for entry in page_inventory:
                 url = entry["url"]
-                if url in visited or any(b in url for b in blocklist):
-                    continue
-                visited.add(url)
-                result = await _trace_page(page, url, dashboard_url, app_id)
-                if result:
-                    traced.append(result)
+                if url not in seen_urls and not any(b in url for b in blocklist):
+                    seen_urls.add(url)
+                    urls_to_trace.append(url)
+
+        sem = asyncio.Semaphore(_TRACE_CONCURRENCY)
+
+        async def trace_with_sem(url: str) -> dict | None:
+            async with sem:
+                page = await context.new_page()
+                try:
+                    return await _trace_page(page, url, dashboard_url, app_id)
+                finally:
+                    await page.close()
+
+        results = await asyncio.gather(*[trace_with_sem(u) for u in urls_to_trace])
+        traced = [r for r in results if r]
 
         await browser.close()
 
+    await _notify(dashboard_url, app_id,
+        f"Interaction tracing complete — {len(traced)} pages traced", "SUCCESS")
     return traced

@@ -54,7 +54,7 @@ async def _run_pipeline(
 ):
     _jobs[job_id]["status"] = "running"
     try:
-        logger.info(f"Crawl service activated — build {build_id}")
+        logger.info(f"Crawl service activated — build {build_id}, framework_dir='{framework_dir}'")
 
         # Build seed_data.json from Excel (if present) or defaults
         await _notify(app_id, "CRAWL_C4AI", "Preparing seed config...", "INFO")
@@ -71,7 +71,6 @@ async def _run_pipeline(
         from crawl4ai_phase import discover_pages
         page_inventory = await discover_pages(app_url, app_id, seed_data, DASHBOARD_URL)
         _jobs[job_id]["pages_discovered"] = len(page_inventory)
-        await _notify(app_id, "CRAWL_C4AI", f"Phase 1 complete — {len(page_inventory)} pages discovered", "SUCCESS")
 
         # Phase 2 — Playwright
         await _notify(app_id, "CRAWL_PW", "Phase 2 starting — Playwright interaction tracing", "INFO")
@@ -79,7 +78,6 @@ async def _run_pipeline(
         from playwright_phase import trace_interactions
         traced_pages = await trace_interactions(page_inventory, app_id, seed_data, DASHBOARD_URL)
         _jobs[job_id]["pages_traced"] = len(traced_pages)
-        await _notify(app_id, "CRAWL_PW", f"Phase 2 complete — {len(traced_pages)} pages traced", "SUCCESS")
 
         # Merge + write crawl_raw.json
         import json
@@ -90,15 +88,13 @@ async def _run_pipeline(
             json.dump(merged, f, indent=2)
 
         # Graph build
-        await _notify(app_id, "GRAPH", "Building graph...", "INFO")
         _jobs[job_id]["phase"] = "graph_build"
         from graph_builder import build_graph
-        graph = build_graph(raw_path, app_id)
+        graph = await build_graph(raw_path, app_id, DASHBOARD_URL)
         n = graph["meta"]["totalNodes"]
         m = graph["meta"]["totalEdges"]
         _jobs[job_id]["nodes"] = n
         _jobs[job_id]["edges"] = m
-        await _notify(app_id, "GRAPH", f"Graph built — {n} nodes, {m} edges", "SUCCESS")
 
         # Diff (UPDATE only)
         if trigger_type == "UPDATE":

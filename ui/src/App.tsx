@@ -65,7 +65,7 @@ export default function App() {
           },
         }}
       >
-        <Layout style={{ minHeight: '100vh', background: C.bg }}>
+        <Layout style={{ height: '100vh', overflow: 'hidden', background: C.bg }}>
           <Header style={{
             background: C.surface, borderBottom: `1px solid ${C.border}`,
             display: 'flex', alignItems: 'center', padding: '0 24px',
@@ -106,7 +106,7 @@ export default function App() {
             </Tooltip>
           </Header>
 
-          <Content style={{ padding: 24, width: '100%' }}>
+          <Content style={{ padding: 24, width: '100%', height: 'calc(100vh - 52px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
             {activeTab === 'kb' && tabItems[0].children}
             {activeTab === 'td' && tabItems[1].children}
             {activeTab === 'ex' && tabItems[2].children}
@@ -130,6 +130,13 @@ export default function App() {
           .ant-table-wrapper .ant-table-tbody > tr:hover > td {
             background: ${isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)'} !important;
           }
+          /* Make the table wrapper and body fill the flex container */
+          .ant-table-wrapper { height: 100%; display: flex; flex-direction: column; }
+          .ant-table-wrapper .ant-spin-nested-loading { flex: 1; min-height: 0; }
+          .ant-table-wrapper .ant-spin-container { height: 100%; display: flex; flex-direction: column; }
+          .ant-table-wrapper .ant-table { flex: 1; min-height: 0; }
+          .ant-table-wrapper .ant-table-container { height: 100%; display: flex; flex-direction: column; }
+          .ant-table-wrapper .ant-table-body { flex: 1; min-height: 0; overflow-y: auto !important; }
         `}</style>
       </ConfigProvider>
     </ThemeContext.Provider>

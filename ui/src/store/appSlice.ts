@@ -7,17 +7,17 @@ interface AppState {
   isDark:       boolean
 }
 
-// If a stale frameworkDir was saved from a previous session with a different default,
-// clear it so it falls back to the current default ./framework
+// Remove stale defaults from previous sessions so the field doesn't silently misdirect output
+const _staleFrameworkDirs = new Set(['./shared/java', './java', './framework'])
 const storedFrameworkDir = localStorage.getItem('frameworkDir')
-if (storedFrameworkDir === './shared/java' || storedFrameworkDir === './java') {
+if (storedFrameworkDir && _staleFrameworkDirs.has(storedFrameworkDir)) {
   localStorage.removeItem('frameworkDir')
 }
 
 const initial: AppState = {
   appId:        localStorage.getItem('appId')        ?? 'sample-app',
   appUrl:       localStorage.getItem('appUrl')        ?? '',
-  frameworkDir: localStorage.getItem('frameworkDir')  ?? './framework',
+  frameworkDir: localStorage.getItem('frameworkDir')  ?? './molina-healthcare',
   isDark:       localStorage.getItem('theme')         !== 'light',
 }
 

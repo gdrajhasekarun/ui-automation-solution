@@ -3,6 +3,8 @@ import os
 import re
 import logging
 
+from pom_validator import validate_all
+
 logger = logging.getLogger("generator.pom_gen")
 
 HEADER = "// AUTO-GENERATED — DO NOT EDIT\n// Regenerate via POST /trigger\n\n"
@@ -14,22 +16,58 @@ def _pascal(s: str) -> str:
 
 _GENERIC_LABELS = {"input", "button", "element", "text", "select", "checkbox", "radio", "a", "link", ""}
 
+# ID/selector strings that look like internal system fields rather than semantic names
+_INTERNAL_ID_RE = re.compile(r'[0-9a-f]{8}|FormSession|FormItem|PageItem|NavigationButton|__VIEWSTATE', re.IGNORECASE)
 
-def _method_name(prefix: str, label: str, selector_key: str = "") -> str:
-    words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
-    # If the label is too generic, derive a name from the selector key instead
-    if not words or label.lower() in _GENERIC_LABELS:
-        words = re.sub(r"[^a-zA-Z0-9 ]", " ", selector_key).split()
-    if not words:
-        return prefix + "Element"
+
+def _semantic_words(label: str, el: dict | None = None, selector_key: str = "") -> list[str]:
+    """
+    Return the most semantic word list for naming a constant or method.
+    Priority: label → primary attribute value → selectorKey.
+    Falls back gracefully when any source looks like an internal ID.
+    """
+    def clean(s: str) -> list[str]:
+        return [w for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w]
+
+    label_words = clean(label)
+    # Label is usable if it's short, non-generic, and has no internal-ID patterns
+    if label_words and label.lower() not in _GENERIC_LABELS and not _INTERNAL_ID_RE.search(label):
+        return label_words[:6]
+
+    # Try the primary attribute value (e.g. name="dd-country" → ["dd", "country"])
+    if el:
+        primary = el.get("primary") or {}
+        ptype = primary.get("type", "")
+        pval = primary.get("value", "")
+        if ptype in ("name", "aria-label") and pval and not _INTERNAL_ID_RE.search(pval):
+            words = clean(pval)
+            if words:
+                return words[:6]
+        # Try id only if it's a short human-readable slug (not a GUID)
+        if ptype == "id" and pval and not _INTERNAL_ID_RE.search(pval) and len(pval) < 40:
+            words = clean(pval)
+            if words:
+                return words[:6]
+
+    # Last resort: selectorKey
+    sk_words = clean(selector_key)
+    return sk_words[:6] if sk_words else ["Element"]
+
+
+def _method_name(prefix: str, label: str, selector_key: str = "", el: dict | None = None) -> str:
+    words = _semantic_words(label, el, selector_key)
     camel = words[0].lower() + "".join(w.capitalize() for w in words[1:])
     return prefix + camel[0].upper() + camel[1:]
 
 
-def _const_name(label: str) -> str:
-    """SCREAMING_SNAKE_CASE constant name from element label."""
-    words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
-    return "_".join(w.upper() for w in words) if words else "ELEMENT"
+def _const_name(label: str, el: dict | None = None, selector_key: str = "") -> str:
+    """SCREAMING_SNAKE_CASE constant name — uses the most semantic source available."""
+    words = _semantic_words(label, el, selector_key)
+    name = "_".join(w.upper() for w in words)
+    # Java identifiers cannot start with a digit
+    if name and name[0].isdigit():
+        name = "EL_" + name
+    return name
 
 
 def _parse_locator(selector_key: str) -> tuple[str, str]:
@@ -86,13 +124,12 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
     for elem in unique_elements:
         sk = elem.get("selectorKey") or ""
         label = (elem.get("name") or "").strip()
-        # Skip noise: single char labels, pure numbers, or labels that are just the tag name
-        if len(label) <= 1 or label.isdigit():
-            label = sk  # fall back to selector key as the label
         loc_type, loc_val = _parse_locator(sk)
-        cname = _const_name(label)
+        cname = _const_name(label, el=elem, selector_key=sk)
+        # Resolve collision by appending a disambiguator from the selector
         if cname in seen_const:
-            cname = cname + "_" + re.sub(r"[^A-Z0-9]", "", _const_name(sk)) or cname + "_2"
+            disambig = re.sub(r"[^A-Z0-9]", "", _const_name(sk, selector_key=sk))
+            cname = (cname + "_" + disambig) if disambig else cname + "_2"
         seen_const.add(cname)
         elem_consts.append((cname, loc_type, loc_val, elem))
 
@@ -130,15 +167,14 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or ""
-        raw_label = (elem.get("name") or "").strip()
-        label = raw_label if len(raw_label) > 1 and not raw_label.isdigit() else sk
+        label = (elem.get("name") or "").strip()
         action = elem.get("actionType") or "click"
 
         if sk in edge_targets:
             target_class, is_self = edge_targets[sk]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
-            mname = _unique_method(_method_name("click", label, sk))
+            mname = _unique_method(_method_name("click", label, sk, elem))
             methods.append(
                 f"    public {ret_type} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -146,7 +182,7 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique_method(_method_name("enter", label, sk))
+            mname = _unique_method(_method_name("enter", label, sk, elem))
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        fill({cname}, value);\n"
@@ -154,7 +190,7 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique_method(_method_name("select", label, sk))
+            mname = _unique_method(_method_name("select", label, sk, elem))
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        select({cname}, value);\n"
@@ -162,7 +198,7 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
                 f"    }}"
             )
         else:
-            mname = _unique_method(_method_name("click", label, sk))
+            mname = _unique_method(_method_name("click", label, sk, elem))
             methods.append(
                 f"    public {class_name} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -231,4 +267,5 @@ def generate_all(graph_path: str, output_dir: str) -> dict:
         written.append({"class": class_name, "path": file_path, "node_id": node["nodeId"]})
         logger.info(f"Generated {class_name}.java — {len(elements)} elements")
 
-    return {"written": written, "count": len(written)}
+    validation_failures = validate_all(written)
+    return {"written": written, "count": len(written), "validation_failures": validation_failures}

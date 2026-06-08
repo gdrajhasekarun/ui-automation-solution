@@ -15,8 +15,8 @@
     "/destroy",
     "/admin/reset"
   ],
-  "appId": "molina-healthcare",
-  "appUrl": "https://www.molinahealthcare.com/",
+  "appId": "aetna-healthcare",
+  "appUrl": "https://www.aetna.com/",
   "form_pool": {
     "email": "testuser@poc.test",
     "password": "TestPass123!",
