@@ -80,11 +80,25 @@ def _build_registry_summary(registry: list[dict], description: str) -> str:
         scored.append((score, entry))
     scored.sort(key=lambda x: -x[0])
     top = scored[:100] if len(scored) > 100 else scored
-    lines = [
-        f"- {e['className']}.{e['methodName']}({', '.join(e.get('parameterNames', []))})"
-        f" → {e.get('returnType', '')} | {e.get('description', '')}"
-        for _, e in top
-    ]
+    lines = []
+    for _, e in top:
+        attrs = e.get("allAttributes") or {}
+        # Build a compact label from the richest available attribute
+        human_label = (
+            attrs.get("ariaLabel") or attrs.get("placeholder") or
+            attrs.get("ariaPlaceholder") or attrs.get("title") or
+            attrs.get("textContent") or attrs.get("name") or ""
+        )
+        attr_hints = ", ".join(filter(None, [
+            f"type={attrs['type']}"        if attrs.get("type")        else None,
+            f"label={human_label}"         if human_label              else None,
+            f"required"                    if attrs.get("required")    else None,
+        ]))
+        lines.append(
+            f"- {e['className']}.{e['methodName']}({', '.join(e.get('parameterNames', []))})"
+            f" → {e.get('returnType', '')} | {e.get('description', '')}"
+            + (f" [{attr_hints}]" if attr_hints else "")
+        )
     return "\n".join(lines)
 
 

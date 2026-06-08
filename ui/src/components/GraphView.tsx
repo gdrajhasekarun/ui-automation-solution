@@ -26,13 +26,22 @@ interface GraphData {
 }
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
-const ACTION_COLOR: Record<string, string> = {
+const ACTION_COLOR_DARK: Record<string, string> = {
   fill:   '#7dd3fc',
   select: '#86efac',
   click:  '#fbbf24',
   check:  '#c4b5fd',
 }
-function actionColor(a: string) { return ACTION_COLOR[a] ?? '#8B949E' }
+const ACTION_COLOR_LIGHT: Record<string, string> = {
+  fill:   '#0369a1',
+  select: '#166534',
+  click:  '#92400e',
+  check:  '#5b21b6',
+}
+function actionColor(a: string, isDark: boolean) {
+  const map = isDark ? ACTION_COLOR_DARK : ACTION_COLOR_LIGHT
+  return map[a] ?? (isDark ? '#8B949E' : '#374151')
+}
 
 function elementCountColor(count: number, C: ReturnType<typeof useTheme>['C']) {
   if (count === 0) return C.muted
@@ -43,7 +52,7 @@ function elementCountColor(count: number, C: ReturnType<typeof useTheme>['C']) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function GraphView({ data }: { data: GraphData }) {
-  const { C } = useTheme()
+  const { C, isDark } = useTheme()
   const nodes = data.nodes || []
   const meta = data.meta
 
@@ -54,18 +63,21 @@ export default function GraphView({ data }: { data: GraphData }) {
     [nodes]
   )
 
-  const tagStyle = (action: string): React.CSSProperties => ({
-    fontFamily: "'IBM Plex Mono',monospace",
-    fontSize: 10,
-    color: actionColor(action),
-    background: actionColor(action) + '22',
-    border: `1px solid ${actionColor(action)}55`,
-    borderRadius: 4,
-    padding: '1px 6px',
-    marginRight: 3,
-    marginBottom: 2,
-    display: 'inline-block',
-  })
+  const tagStyle = (action: string): React.CSSProperties => {
+    const c = actionColor(action, isDark)
+    return {
+      fontFamily: "'IBM Plex Mono',monospace",
+      fontSize: 10,
+      color: c,
+      background: c + (isDark ? '22' : '18'),
+      border: `1px solid ${c}${isDark ? '55' : '44'}`,
+      borderRadius: 4,
+      padding: '1px 6px',
+      marginRight: 3,
+      marginBottom: 2,
+      display: 'inline-block',
+    }
+  }
 
   const columns = [
     {
@@ -145,13 +157,13 @@ export default function GraphView({ data }: { data: GraphData }) {
           <AntTooltip key={i} title={<span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>{el.selectorKey}</span>} color="#1a1a2e">
             <div style={{
               background: C.surface,
-              border: `1px solid ${actionColor(el.actionType)}44`,
+              border: `1px solid ${actionColor(el.actionType, isDark)}44`,
               borderRadius: 6,
               padding: '5px 10px',
               cursor: 'default',
               minWidth: 130,
             }}>
-              <div style={{ fontSize: 10, color: actionColor(el.actionType), fontFamily: "'IBM Plex Mono',monospace", marginBottom: 1 }}>
+              <div style={{ fontSize: 10, color: actionColor(el.actionType, isDark), fontFamily: "'IBM Plex Mono',monospace", marginBottom: 1 }}>
                 {el.actionType} · {el.role}
               </div>
               <div style={{ fontSize: 12, color: C.text, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 500 }}>
@@ -183,8 +195,8 @@ export default function GraphView({ data }: { data: GraphData }) {
         )}
         {/* Action legend */}
         <div style={{ display: 'flex', gap: 12, marginLeft: 8 }}>
-          {Object.entries(ACTION_COLOR).map(([action, color]) => (
-            <span key={action} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color }}>
+          {Object.keys(ACTION_COLOR_DARK).map(action => (
+            <span key={action} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: actionColor(action, isDark) }}>
               ● {action}
             </span>
           ))}

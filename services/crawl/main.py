@@ -50,7 +50,8 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
 
 async def _run_pipeline(
     job_id: str, app_id: str, app_url: str,
-    build_id: str, trigger_type: str, framework_dir: str
+    build_id: str, trigger_type: str, framework_dir: str,
+    global_filter_threshold: float = 0.35,
 ):
     _jobs[job_id]["status"] = "running"
     try:
@@ -90,7 +91,7 @@ async def _run_pipeline(
         # Graph build
         _jobs[job_id]["phase"] = "graph_build"
         from graph_builder import build_graph
-        graph = await build_graph(raw_path, app_id, DASHBOARD_URL)
+        graph = await build_graph(raw_path, app_id, DASHBOARD_URL, global_filter_threshold)
         n = graph["meta"]["totalNodes"]
         m = graph["meta"]["totalEdges"]
         _jobs[job_id]["nodes"] = n
@@ -130,11 +131,12 @@ async def _run_pipeline(
 
 @app.post("/trigger")
 async def trigger(body: dict, background_tasks: BackgroundTasks):
-    app_id        = body["app_id"]
-    app_url       = body.get("app_url", "")
-    build_id      = body.get("build_id", "build-" + uuid.uuid4().hex[:8])
-    trigger_type  = body.get("trigger_type", "INITIAL")
-    framework_dir = body.get("framework_dir", "")
+    app_id                   = body["app_id"]
+    app_url                  = body.get("app_url", "")
+    build_id                 = body.get("build_id", "build-" + uuid.uuid4().hex[:8])
+    trigger_type             = body.get("trigger_type", "INITIAL")
+    framework_dir            = body.get("framework_dir", "")
+    global_filter_threshold  = float(body.get("global_filter_threshold", 0.35))
 
     job_id = "job-" + uuid.uuid4().hex[:8]
     _jobs[job_id] = {
@@ -144,7 +146,8 @@ async def trigger(body: dict, background_tasks: BackgroundTasks):
     }
 
     background_tasks.add_task(
-        _run_pipeline, job_id, app_id, app_url, build_id, trigger_type, framework_dir
+        _run_pipeline, job_id, app_id, app_url, build_id, trigger_type, framework_dir,
+        global_filter_threshold,
     )
     return {"job_id": job_id, "status": "STARTED"}
 

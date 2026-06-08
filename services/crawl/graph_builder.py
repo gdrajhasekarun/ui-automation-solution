@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import httpx
 
@@ -25,8 +26,24 @@ async def _notify(dashboard_url: str, app_id: str, message: str, level: str = "I
         pass
 
 
+# Tracking/analytics query params that don't change page identity
+_TRACKING_PARAMS = frozenset({
+    "icid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "utm_keyword", "utm_adgroup", "ref", "source", "gclid", "fbclid",
+    "msclkid", "dclid", "wbraid", "gbraid", "mc_cid", "mc_eid",
+})
+
+
+def _normalize_url(url: str) -> str:
+    """Strip tracking params and fragment; normalise trailing slash."""
+    p = urlparse(url)
+    qs = {k: v for k, v in parse_qs(p.query).items() if k.lower() not in _TRACKING_PARAMS}
+    clean = urlunparse(p._replace(query=urlencode(qs, doseq=True), fragment=""))
+    return clean.rstrip("/")
+
+
 def _node_id(url: str) -> str:
-    return "node_" + hashlib.md5(url.encode()).hexdigest()[:8]
+    return "node_" + hashlib.md5(_normalize_url(url).encode()).hexdigest()[:8]
 
 
 _BAD_TITLES = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
@@ -123,13 +140,13 @@ def _dedup_elements(elements: list[dict]) -> list[dict]:
     return [el for _, el in groups]
 
 
-def _filter_global_elements(nodes: dict) -> dict:
+def _filter_global_elements(nodes: dict, threshold: float = 0.35) -> dict:
     """
-    Remove elements that appear on ≥THRESHOLD fraction of all pages.
+    Remove elements that appear on ≥threshold fraction of all pages.
     These are header/footer/nav elements that belong to the site template,
     not the individual page — including them in every POM class is noise.
     """
-    THRESHOLD = 0.6
+    THRESHOLD = threshold
     total = len(nodes)
     if total < 3:
         return nodes
@@ -184,15 +201,9 @@ def _edge_exists(edges: list, from_nid: str, to_nid: str) -> bool:
 
 
 def _find_node_by_url(nodes: dict, url: str) -> dict | None:
-    from urllib.parse import urlparse
-
-    def norm(u: str) -> str:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}{p.path}".rstrip("/")
-
-    target = norm(url)
+    target = _normalize_url(url)
     for nid, node in nodes.items():
-        if norm(node["url"]) == target:
+        if _normalize_url(node["url"]) == target:
             return node
     return None
 
@@ -219,7 +230,45 @@ def _select_assertable(elements: list) -> list[str]:
     return chosen[:3]
 
 
-async def build_graph(crawl_raw_path: str, app_id: str, dashboard_url: str = "") -> dict:
+def _page_sk_set(node: dict) -> frozenset[str]:
+    """Return the set of selectorKeys for a node — used as its element fingerprint."""
+    return frozenset(e.get("selectorKey", "") for e in node.get("elements", []) if e.get("selectorKey"))
+
+
+def _merge_duplicate_pages(nodes: dict[str, dict]) -> tuple[dict[str, dict], dict[str, str]]:
+    """
+    Collapse nodes that represent the same page reached via different URLs
+    (e.g. auth redirects: /benefits?icid=X and /login both render the login page).
+    Two nodes are merged when they share the same title AND ≥80% of their selectorKeys.
+    The node with the shortest canonical URL is kept; others are dropped.
+    Returns (pruned_nodes, merge_map) where merge_map maps dropped_nid → canonical_nid.
+    """
+    node_list = list(nodes.values())
+    merge_map: dict[str, str] = {}  # dropped_nid → canonical_nid
+
+    for i in range(len(node_list)):
+        for j in range(i + 1, len(node_list)):
+            a, b = node_list[i], node_list[j]
+            if a["title"] != b["title"]:
+                continue
+            sks_a = _page_sk_set(a)
+            sks_b = _page_sk_set(b)
+            if not sks_a or not sks_b:
+                continue
+            overlap = len(sks_a & sks_b) / min(len(sks_a), len(sks_b))
+            if overlap >= 0.8:
+                canon, dup = (a, b) if len(_normalize_url(a["url"])) <= len(_normalize_url(b["url"])) else (b, a)
+                merge_map[dup["nodeId"]] = canon["nodeId"]
+
+    if not merge_map:
+        return nodes, {}
+
+    logger.info(f"Merging {len(merge_map)} duplicate page node(s) into canonical nodes")
+    pruned = {nid: n for nid, n in nodes.items() if nid not in merge_map}
+    return pruned, merge_map
+
+
+async def build_graph(crawl_raw_path: str, app_id: str, dashboard_url: str = "", global_filter_threshold: float = 0.35) -> dict:
     await _notify(dashboard_url, app_id, "Building site graph…")
     with open(crawl_raw_path) as f:
         raw = json.load(f)
@@ -248,22 +297,29 @@ async def build_graph(crawl_raw_path: str, app_id: str, dashboard_url: str = "")
             "assertableElements": _select_assertable(elements),
         }
 
+    # Merge nodes that are actually the same page (e.g. auth redirects)
+    nodes, merge_map = _merge_duplicate_pages(nodes)
+
     # Remove global nav/header/footer elements that appear on most pages
-    nodes = _filter_global_elements(nodes)
+    nodes = _filter_global_elements(nodes, global_filter_threshold)
 
     # Build edges
     for page in raw:
         url = page.get("url", "")
         if not url:
             continue
-        from_nid = _node_id(url)
+        from_nid = merge_map.get(_node_id(url), _node_id(url))
+        if from_nid not in nodes:
+            continue
 
         # Primary edges — Playwright click-tracing
         for t in page.get("transitions", []):
             target_url = t.get("toUrl")
             if not target_url:
                 continue
-            to_nid = _node_id(target_url)
+            to_nid = merge_map.get(_node_id(target_url), _node_id(target_url))
+            if to_nid not in nodes:
+                continue
             edges.append({
                 "edgeId":      _edge_id(from_nid, to_nid, t.get("selectorKey", "")),
                 "fromNodeId":  from_nid,

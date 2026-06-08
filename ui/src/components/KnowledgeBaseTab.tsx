@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Button, Input, Drawer, Spin } from 'antd'
+import { Button, Input, Drawer, Spin, Slider, Tooltip } from 'antd'
 import { UnorderedListOutlined, LoadingOutlined } from '@ant-design/icons'
 import { useTheme } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
@@ -173,6 +173,7 @@ export default function KnowledgeBaseTab() {
   const [localError, setLocalError]   = useState('')
   const [liveEvents, setLiveEvents]   = useState<UiEvent[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [filterThreshold, setFilterThreshold] = useState(35)   // percent, sent as 0–1 fraction
 
   const seenIdsRef   = useRef(new Set<string>())
   const esRef        = useRef<EventSource | null>(null)
@@ -182,9 +183,9 @@ export default function KnowledgeBaseTab() {
   const [triggerCrawl, { isLoading: triggering, error: triggerError }] = useTriggerCrawlMutation()
   const [fetchEvents] = useLazyGetEventsQuery()
 
-  // Load graph whenever pom stage completes (pipeline done)
-  const graphReady = stages.pom.status === 'complete' || stages.pom.status === 'needs_review'
-  const { data: graphData } = useGetGraphQuery(appId, { skip: !appId || !graphReady })
+  // Load graph whenever pom stage completes OR immediately if appId is set (graph.json may already exist on disk)
+  const graphReady = !!appId.trim()
+  const { data: graphData } = useGetGraphQuery(appId, { skip: !graphReady })
 
   // On appId change: fetch existing events and replay them to restore previous run state
   useEffect(() => {
@@ -282,6 +283,7 @@ export default function KnowledgeBaseTab() {
         app_id: appId.trim(), app_url: appUrl.trim(),
         build_id: 'build-' + Date.now(), trigger_type: 'INITIAL',
         framework_dir: frameworkDir.trim(),
+        global_filter_threshold: filterThreshold / 100,
       }).unwrap()
     } catch (e: unknown) {
       const msg = (e as { data?: { detail?: string }; error?: string })
@@ -326,6 +328,21 @@ export default function KnowledgeBaseTab() {
         <div>
           <div style={labelStyle}>Framework Dir</div>
           <Input value={frameworkDir} onChange={e => dispatch(setFrameworkDir(e.target.value))} placeholder="./shared/java" style={{ width: 220 }} />
+        </div>
+        <div style={{ minWidth: 200, borderLeft: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, paddingLeft: 16, paddingRight: 16 }}>
+          <Tooltip title="Elements appearing on this % of pages or more are treated as global nav/header/footer and removed from all POMs. Lower = stricter filtering.">
+            <div style={labelStyle}>
+              Global Filter Threshold — <span style={{ color: C.text }}>{filterThreshold}%</span>
+            </div>
+          </Tooltip>
+          <Slider
+            min={10} max={80} step={5}
+            value={filterThreshold}
+            onChange={setFilterThreshold}
+            marks={{ 10: '10%', 35: '35%', 60: '60%', 80: '80%' }}
+            style={{ width: 200 }}
+            disabled={running}
+          />
         </div>
         <Button
           type="primary"

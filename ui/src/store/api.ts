@@ -4,11 +4,12 @@ import type { TestCase, TestResult, TestRun, UiEvent, Parameter } from '../types
 // ── Request / response shapes ─────────────────────────────────────────────────
 
 export interface CrawlTriggerReq {
-  app_id:        string
-  app_url:       string
-  build_id:      string
-  trigger_type:  'INITIAL' | 'UPDATE'
-  framework_dir?: string
+  app_id:                    string
+  app_url:                   string
+  build_id:                  string
+  trigger_type:              'INITIAL' | 'UPDATE'
+  framework_dir?:            string
+  global_filter_threshold?:  number   // 0.0–1.0, fraction of pages an element must appear on to be filtered as global nav
 }
 
 export interface LoadExcelReq  { excel_path: string }

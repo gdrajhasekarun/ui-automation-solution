@@ -80,7 +80,7 @@ async def _run_generation(job_id: str, app_id: str, trigger_type: str, framework
                 for err in errs:
                     await _notify(app_id, "GENERATOR", f"  {os.path.basename(fpath)}: {err}", "WARN")
 
-        reg = generate_registry(graph_path, java_dir, app_id)
+        reg = generate_registry(graph_path, java_dir)
         _jobs[job_id]["methods_written"] = reg["count"]
 
         recon = reconciler_run(diff_path, java_dir, DASHBOARD_URL)

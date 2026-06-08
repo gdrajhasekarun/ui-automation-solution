@@ -18,7 +18,7 @@ def _method_name(prefix: str, label: str) -> str:
     return prefix + camel[0].upper() + camel[1:]
 
 
-def generate_registry(graph_path: str, java_dir: str, app_id: str) -> dict:
+def generate_registry(graph_path: str, java_dir: str) -> dict:
     with open(graph_path) as f:
         graph = json.load(f)
 
@@ -73,21 +73,32 @@ def generate_registry(graph_path: str, java_dir: str, app_id: str) -> dict:
                 desc = f"clicks the {label} on {class_name}"
 
             registry.append({
-                "className": class_name,
-                "methodName": method_name,
-                "selectorKey": sk,
-                "actionType": action,
-                "parameterNames": [p["name"] for p in params],
-                "returnType": ret_type,
-                "isNavigation": is_nav,
-                "navigatesTo": navigates_to,
-                "description": desc
+                "className":       class_name,
+                "methodName":      method_name,
+                "selectorKey":     sk,
+                "actionType":      action,
+                "parameterNames":  [p["name"] for p in params],
+                "returnType":      ret_type,
+                "isNavigation":    is_nav,
+                "navigatesTo":     navigates_to,
+                "description":     desc,
+                # Rich attribute capture from crawl — used by LLM planner + self-healing
+                "allAttributes":   elem.get("allAttributes") or {},
+                "selectorFallbacks": elem.get("selectorFallbacks") or [],
             })
 
+    # Primary copy — alongside graph.json for dashboard/API access
     out_dir = os.path.join(os.path.dirname(graph_path))
     reg_path = os.path.join(out_dir, "pom_registry.json")
     with open(reg_path, "w") as f:
         json.dump(registry, f, indent=2)
 
-    logger.info(f"Registry: {len(registry)} methods → {reg_path}")
+    # Framework copy — src/main/resources so it's on the classpath at test runtime
+    resources_dir = os.path.join(java_dir, "src", "main", "resources")
+    os.makedirs(resources_dir, exist_ok=True)
+    framework_reg_path = os.path.join(resources_dir, "pom_registry.json")
+    with open(framework_reg_path, "w") as f:
+        json.dump(registry, f, indent=2)
+
+    logger.info(f"Registry: {len(registry)} methods → {reg_path} + {framework_reg_path}")
     return {"path": reg_path, "count": len(registry), "registry": registry}
