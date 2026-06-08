@@ -7,10 +7,10 @@ logger = logging.getLogger("crawl-service.seed_builder")
 
 
 def _find_excel(framework_dir: str) -> str | None:
-    """Return the first .xlsx found under framework_dir/src/test/java, or None."""
+    """Return the first .xlsx found under framework_dir/src/main/resources, or None."""
     if not framework_dir or not os.path.isdir(framework_dir):
         return None
-    pattern = os.path.join(framework_dir, "src", "test", "java", "**", "*.xlsx")
+    pattern = os.path.join(framework_dir, "src", "main", "resources", "**", "*.xlsx")
     matches = glob.glob(pattern, recursive=True)
     if matches:
         logger.info(f"Found Excel file: {matches[0]}")

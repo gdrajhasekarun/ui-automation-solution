@@ -1,0 +1,3327 @@
+[
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "enterCookieListSearch",
+    "selectorKey": "#vendor-search-handler",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the Cookie list search on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickMoreAetna",
+    "selectorKey": "xpath=//button[normalize-space()=\"More Aetna\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the More Aetna on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickExploreSite",
+    "selectorKey": "xpath=//button[normalize-space()=\"Explore site\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Explore site on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickLogIn",
+    "selectorKey": "#login-button",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Log in on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickClearSearch",
+    "selectorKey": "xpath=//button[normalize-space()=\"clear search\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the clear search on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickOpenMenu",
+    "selectorKey": "xpath=//button[normalize-space()=\"Open Menu\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Open Menu on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickFindPlans",
+    "selectorKey": "xpath=//button[normalize-space()=\"Find plans\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Find plans on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickSkipToMainContent",
+    "selectorKey": "xpath=//a[normalize-space()=\"Skip to main content\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Skip to main content on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsurancePlansAetnaPage",
+    "methodName": "clickIndividualsAndFamilies",
+    "selectorKey": "xpath=//a[normalize-space()=\"Individuals and families\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsurancePlansAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Individuals and families on HealthInsurancePlansAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "IndividualsFamiliesPage",
+    "methodName": "clickFindCare",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_copy_copy_copy_link_tabs_copy_copy_copy_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "IndividualsFamiliesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Find care on IndividualsFamiliesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_copy_copy_copy_link_tabs_copy_copy_copy_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Find care",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "IndividualsFamiliesPage",
+    "methodName": "clickFindMedicine",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_copy_copy_copy_link_tabs_copy_copy_copy_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "IndividualsFamiliesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Find medicine on IndividualsFamiliesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_copy_copy_copy_link_tabs_copy_copy_copy_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Find medicine",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "IndividualsFamiliesPage",
+    "methodName": "selectPlanType",
+    "selectorKey": "#PLAN TYPE",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "IndividualsFamiliesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the PLAN TYPE on IndividualsFamiliesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "PLAN TYPE",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "customSelect",
+        "comboboxRedirect"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthCareProfessionalsPage",
+    "methodName": "clickWebinarsAndDemos",
+    "selectorKey": "#content_section_responsivegrid_852649380_responsivegrid_tabs_copy_link_tabs_copy_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthCareProfessionalsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Webinars and demos on HealthCareProfessionalsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_852649380_responsivegrid_tabs_copy_link_tabs_copy_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Webinars and demos",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthCareProfessionalsPage",
+    "methodName": "clickAccreditedCourses",
+    "selectorKey": "#content_section_responsivegrid_852649380_responsivegrid_tabs_copy_link_tabs_copy_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthCareProfessionalsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Accredited courses on HealthCareProfessionalsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_852649380_responsivegrid_tabs_copy_link_tabs_copy_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Accredited courses",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "HealthCareProfessionalsPage",
+    "methodName": "enterMessageinput",
+    "selectorKey": "#messageInput",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HealthCareProfessionalsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the messageInput on HealthCareProfessionalsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "messageInput",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "RegisterPage",
+    "methodName": "clickIniciarSesiN",
+    "selectorKey": ".O7_PiL7T6tTC1awJAg1w",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "RegisterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Iniciar sesi\u00f3n on RegisterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Iniciar sesi\u00f3n",
+      "href": null,
+      "classes": [
+        "O7_PiL7T6tTC1awJAg1w"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "RegisterPage",
+    "methodName": "enterFieldone",
+    "selectorKey": "#fieldOne",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "RegisterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the fieldOne on RegisterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "fieldOne",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "hbyE1Myd6N6uXABEPwv_"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "RegisterPage",
+    "methodName": "enterFieldtwo",
+    "selectorKey": "#fieldTwo",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "RegisterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the fieldTwo on RegisterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "fieldTwo",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "hbyE1Myd6N6uXABEPwv_"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "MedicarePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".d-none",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "MedicarePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on MedicarePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "cmp-zipcode--input",
+        "d-none"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "MedicarePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".mapurlparamvalue",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "MedicarePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on MedicarePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "mapurlparamvalue"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HealthInsuranceThroughWorkPage",
+    "methodName": "clickVideoTranscriptForAetnaHealthierHappensTogether",
+    "selectorKey": "#link_content_section_textwithmedia_copy_largemedia_inpagetranscriptcontent_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthInsuranceThroughWorkPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Video transcript for \u201cAetna \u2014 Healthier Happens Together\u201d on HealthInsuranceThroughWorkPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_textwithmedia_copy_largemedia_inpagetranscriptcontent_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Video transcript for \u201cAetna \u2014 Healthier Happens Together\u201d",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "DsepublicPage",
+    "methodName": "clickAetnaLogo",
+    "selectorKey": ".aet-logo",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "DsepublicPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Aetna Logo on DsepublicPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "brandingLogoId",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": "Aetna Logo",
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": "#/contentPage?page=providerSearchLanding&site_id=dse&language=en",
+      "classes": [
+        "aet-logo"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "BuyDentalCoveragePage",
+    "methodName": "enterZip",
+    "selectorKey": "#Zip",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "BuyDentalCoveragePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the Zip on BuyDentalCoveragePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "Zip",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "BuyDentalCoveragePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".mapurlparamvalue",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "BuyDentalCoveragePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on BuyDentalCoveragePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "mapurlparamvalue"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "BuyDentalCoveragePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".d-none",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "BuyDentalCoveragePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on BuyDentalCoveragePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "d-none"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HdhpPage",
+    "methodName": "clickTopAdvantages",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HdhpPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Top advantages on HdhpPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Top advantages",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HdhpPage",
+    "methodName": "clickThingsToConsider",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HdhpPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Things to consider on HdhpPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Things to consider",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "HdhpPage",
+    "methodName": "clickHowCanIGetCoverageOrChangeMyPlan",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_accordioncore_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HdhpPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the How can I get coverage or change my plan? on HdhpPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_accordioncore_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "How can I get coverage or change my plan?",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "VisionInsurancePage",
+    "methodName": "enterZip",
+    "selectorKey": "#Zip",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "VisionInsurancePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the Zip on VisionInsurancePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "Zip",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "VisionInsurancePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".mapurlparamvalue",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "VisionInsurancePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on VisionInsurancePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "mapurlparamvalue"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "VisionInsurancePage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".d-none",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "VisionInsurancePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on VisionInsurancePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "d-none"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "methodName": "clickClickMe",
+    "selectorKey": "xpath=//button[normalize-space()=\"Click Me!\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Click Me! on EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "methodName": "clickFeedback",
+    "selectorKey": "#nebula_div_btn",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Feedback on EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "methodName": "clickRefresh",
+    "selectorKey": "#auraErrorReload",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Refresh on EnterZipCodeToFindMedicarePlansInYourAreaAetnaPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "clickLogIn",
+    "selectorKey": ".links_rd",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the log in on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "log in",
+      "href": "https://member.aetna.com/MbrLanding/RoutingServlet?createSession=true&navDeepLink=DOCFINDDEEPLINK",
+      "classes": [
+        "links_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "clickFeedback",
+    "selectorKey": "#nebula_div_btn",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Feedback on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "nebula_div_btn",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": "Feedback",
+      "value": null,
+      "textContent": "Feedback",
+      "href": null,
+      "classes": [
+        "kampyle_vertical_button",
+        "kampyle_right",
+        "wcagOutline"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterCplanstatus",
+    "selectorKey": "#cplanStatus",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the cplanStatus on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "cplanStatus",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": "cplanStatus",
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterFplanstatus",
+    "selectorKey": "#fplanStatus",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the fplanStatus on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "fplanStatus",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": "fplanStatus",
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterGeo1",
+    "selectorKey": "#geo1",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the geo1 on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "geo1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterZipcode",
+    "selectorKey": "#zipcode",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the zipcode on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "zipcode",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_field",
+        "geo_box_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterCity",
+    "selectorKey": "#city",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the city on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "city",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_field",
+        "geo_box_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterCounty",
+    "selectorKey": "#county",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the county on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "county",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_field",
+        "geo_box_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterProvCountryUsa",
+    "selectorKey": "#prov_country_usa",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the prov_country_usa on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "prov_country_usa",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterProvCountryMexico",
+    "selectorKey": "#prov_country_mexico",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the prov_country_mexico on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "prov_country_mexico",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterProviderCategory",
+    "selectorKey": "#provider_category",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the provider_category on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "provider_category",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterSiteId",
+    "selectorKey": "#site_id",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the site_id on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "site_id",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterLangpref",
+    "selectorKey": "#langpref",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the langpref on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "langpref",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "enterSortby",
+    "selectorKey": "#sortBy",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the sortBy on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "sortBy",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "selectFacilitiesSpecPrctcCd",
+    "selectorKey": "#facilities_spec_prctc_cd",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the facilities_spec_prctc_cd on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "facilities_spec_prctc_cd",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_dropdown_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".form_dropdown_rd"
+    ]
+  },
+  {
+    "className": "HomePage",
+    "methodName": "selectMiles",
+    "selectorKey": "#miles",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the miles on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "miles",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_dropdown_rd",
+        "miles_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HomePage",
+    "methodName": "selectState",
+    "selectorKey": "#state",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HomePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the state on HomePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "state",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "form_dropdown_rd",
+        "state_rd"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "FaqsHealthInsurancePage",
+    "methodName": "clickResourcesForYourPatientsAndPractice",
+    "selectorKey": "#link_content_section_responsivegrid_copy__responsivegrid_accordioncore_copy_1996607653_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "FaqsHealthInsurancePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Resources for your patients and practice on FaqsHealthInsurancePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_copy__responsivegrid_accordioncore_copy_1996607653_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Resources for your patients and practice",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "MemberWelcomeGuidePage",
+    "methodName": "clickAccessYourDigitalIdCard",
+    "selectorKey": "#content_section_responsivegrid_1948076957_responsivegrid_tabs_copy_link_tabs_copy_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "MemberWelcomeGuidePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Access your digital ID card on MemberWelcomeGuidePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_1948076957_responsivegrid_tabs_copy_link_tabs_copy_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Access your digital ID card",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "MemberWelcomeGuidePage",
+    "methodName": "clickFindTheCareYouNeed",
+    "selectorKey": "#content_section_responsivegrid_1948076957_responsivegrid_tabs_copy_link_tabs_copy_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "MemberWelcomeGuidePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Find the care you need on MemberWelcomeGuidePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_1948076957_responsivegrid_tabs_copy_link_tabs_copy_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Find the care you need",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "FindFormPage",
+    "methodName": "clickSpendingAndSavingsAccountsFsaHraHsaAndRra",
+    "selectorKey": "#link_content_section_responsivegrid_copy__responsivegrid_accordioncore_3",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "FindFormPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Spending and savings accounts (FSA, HRA, HSA and RRA) on FindFormPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_copy__responsivegrid_accordioncore_3",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Spending and savings accounts (FSA, HRA, HSA and RRA)",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "StateSpecificInformationPage",
+    "methodName": "enterAsamguidelinecode",
+    "selectorKey": "#asamguidelinecode",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "StateSpecificInformationPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the asamguidelinecode on StateSpecificInformationPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "asamguidelinecode",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "StateSpecificInformationPage",
+    "methodName": "selectState",
+    "selectorKey": "#State",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "StateSpecificInformationPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the State on StateSpecificInformationPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "State",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "customSelect"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".customSelect"
+    ]
+  },
+  {
+    "className": "MentalEmotionalHealthPage",
+    "methodName": "clickVirtualCare",
+    "selectorKey": "#content_section_responsivegrid_192665839_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "MentalEmotionalHealthPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Virtual care on MentalEmotionalHealthPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_192665839_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Virtual care",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "MentalEmotionalHealthPage",
+    "methodName": "clickInPersonCare",
+    "selectorKey": "#content_section_responsivegrid_192665839_responsivegrid_tabs_link_tabs_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "MentalEmotionalHealthPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the In-person care on MentalEmotionalHealthPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_192665839_responsivegrid_tabs_link_tabs_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "In-person care",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "AboutUsPage",
+    "methodName": "clickOurStory",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AboutUsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Our story on AboutUsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Our story",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AboutUsPage",
+    "methodName": "clickOurPeople",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AboutUsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Our people on AboutUsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Our people",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "LegalNoticesPage",
+    "methodName": "clickLargeGroupDentalUnderwritingFullyInsuredDisclosures",
+    "selectorKey": "#link_content_section_responsivegrid_19828_responsivegrid_accordioncore_207073_5",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "LegalNoticesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Large group dental underwriting fully insured disclosures on LegalNoticesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_19828_responsivegrid_accordioncore_207073_5",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Large group dental underwriting fully insured disclosures",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "ContactUsPage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".d-none",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "ContactUsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on ContactUsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "cmp-zipcode--input",
+        "d-none"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "ContactUsPage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".mapurlparamvalue",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "ContactUsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on ContactUsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "mapurlparamvalue"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AccessibilityServicesPage",
+    "methodName": "clickAElement",
+    "selectorKey": ".logo__link",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AccessibilityServicesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the a element on AccessibilityServicesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": "/",
+      "classes": [
+        "logo__link"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AccessibilityServicesPage",
+    "methodName": "clickAetna",
+    "selectorKey": ".link__text--footer",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AccessibilityServicesPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Aetna on AccessibilityServicesPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Aetna",
+      "href": "https://www.aetna.com/about-us/contact-aetna.html#tab_content_section_responsivegrid_202619046_responsivegrid_tabs_link_tabs_5",
+      "classes": [
+        "link__text--footer"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMobilePage",
+    "methodName": "clickTranscriptForAetnaHealthAppVideo",
+    "selectorKey": "#link_content_section_textwithmedia_copy_c_largemedia_inpagetranscriptcontent_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMobilePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Transcript for \u201cAetna Health app video\u201d on AetnaMobilePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_textwithmedia_copy_c_largemedia_inpagetranscriptcontent_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Transcript for \u201cAetna Health app video\u201d",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "ComplaintsGrievancesAppealsPage",
+    "methodName": "selectState",
+    "selectorKey": "#State",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "ComplaintsGrievancesAppealsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the State on ComplaintsGrievancesAppealsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "State",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "customSelect"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".customSelect"
+    ]
+  },
+  {
+    "className": "GlossaryPage",
+    "methodName": "clickAll",
+    "selectorKey": ".active",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "GlossaryPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the ALL on GlossaryPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "ALL",
+      "href": null,
+      "classes": [
+        "cmp-glossary--btn-desktop",
+        "active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "DisclosureInformationPage",
+    "methodName": "selectPlan",
+    "selectorKey": "#Plan",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "DisclosureInformationPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the Plan on DisclosureInformationPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "Plan",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "customSelect"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".customSelect"
+    ]
+  },
+  {
+    "className": "DisclaimerPage",
+    "methodName": "clickLegalNotices",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "DisclaimerPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Legal notices on DisclaimerPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Legal notices",
+      "href": "/legal-notices.html",
+      "classes": [
+        "link__alt--inline",
+        "cmp-breadcrumb-item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "DisclaimerPage",
+    "methodName": "clickFeedback",
+    "selectorKey": "#nebula_div_btn",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "DisclaimerPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Feedback on DisclaimerPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "nebula_div_btn",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": "Feedback",
+      "value": null,
+      "textContent": "Feedback",
+      "href": null,
+      "classes": [
+        "kampyle_vertical_button",
+        "kampyle_right",
+        "wcagOutline"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "ProgramProvisionsPage",
+    "methodName": "clickLegalNotices",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "ProgramProvisionsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Legal notices on ProgramProvisionsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Legal notices",
+      "href": "/legal-notices.html",
+      "classes": [
+        "link__alt--inline",
+        "cmp-breadcrumb-item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "ProgramProvisionsPage",
+    "methodName": "clickImportantInformationPdf",
+    "selectorKey": ".link__digitaldownload",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "ProgramProvisionsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Important information (PDF) on ProgramProvisionsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Important information (PDF)",
+      "href": "/content/dam/aetna/pdfs/aetnacom/legal-notices/documents/CoverageOptionsFactSheet-FAQs.pdf",
+      "classes": [
+        "link__digitaldownload"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "ProgramProvisionsPage",
+    "methodName": "clickDisclaimers",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_copy_link_tabs_copy_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "ProgramProvisionsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Disclaimers on ProgramProvisionsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_copy_link_tabs_copy_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Disclaimers",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "ProgramProvisionsPage",
+    "methodName": "clickPersonalHealthRecord",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_copy_link_tabs_copy_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "ProgramProvisionsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Personal health record on ProgramProvisionsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_copy_link_tabs_copy_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Personal health record",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "ProgramProvisionsPage",
+    "methodName": "clickOklahomaPolicyFormNumbers",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_tabs_copy_par_3_responsivegrid_responsivegrid_accordioncore_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "ProgramProvisionsPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Oklahoma policy form numbers on ProgramProvisionsPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_tabs_copy_par_3_responsivegrid_responsivegrid_accordioncore_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Oklahoma policy form numbers",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "SiteMapPage",
+    "methodName": "clickAetnaMedicarePlans",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "SiteMapPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Aetna Medicare plans on SiteMapPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Aetna Medicare plans",
+      "href": "/medicare/compare-plans-enroll.html",
+      "classes": [
+        "link__alt--inline"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "FraudWasteAbusePage",
+    "methodName": "clickAboutUs",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "FraudWasteAbusePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the About us on FraudWasteAbusePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "About us",
+      "href": "/about-us.html",
+      "classes": [
+        "link__alt--inline",
+        "cmp-breadcrumb-item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "FraudWasteAbusePage",
+    "methodName": "clickFraud",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_accordioncore_copy_c_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "FraudWasteAbusePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Fraud on FraudWasteAbusePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_accordioncore_copy_c_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Fraud",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "HealthCareReformPage",
+    "methodName": "clickFeedback",
+    "selectorKey": "#nebula_div_btn",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HealthCareReformPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Feedback on HealthCareReformPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "nebula_div_btn",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": "Feedback",
+      "value": null,
+      "textContent": "Feedback",
+      "href": null,
+      "classes": [
+        "kampyle_vertical_button",
+        "kampyle_right",
+        "wcagOutline"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaExternalReviewProgramPage",
+    "methodName": "clickHowLongDoesTheProcessTake",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_accordioncore_4",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaExternalReviewProgramPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the How long does the process take? on AetnaExternalReviewProgramPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_accordioncore_4",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "How long does the process take?",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "NondiscriminationNoticePage",
+    "methodName": "clickLegalNotices",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "NondiscriminationNoticePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Legal notices on NondiscriminationNoticePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Legal notices",
+      "href": "/legal-notices.html",
+      "classes": [
+        "link__alt--inline",
+        "cmp-breadcrumb-item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "NondiscriminationNoticePage",
+    "methodName": "clickCaliforniaNondiscriminationNoticePdf",
+    "selectorKey": ".link__digitaldownload",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "NondiscriminationNoticePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the California nondiscrimination notice (PDF) on NondiscriminationNoticePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "California nondiscrimination notice (PDF)",
+      "href": "/content/dam/aetna/pdfs/aetnacom/legal-notices/documents/california-non-discrimination-notice.pdf",
+      "classes": [
+        "link__digitaldownload"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "NondiscriminationNoticePage",
+    "methodName": "selectState",
+    "selectorKey": "#state",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "NondiscriminationNoticePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the state on NondiscriminationNoticePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "state",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "customSelect"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".customSelect"
+    ]
+  },
+  {
+    "className": "PrivacyPage",
+    "methodName": "clickLegalNotices",
+    "selectorKey": ".link__alt--inline",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Legal notices on PrivacyPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Legal notices",
+      "href": "/legal-notices.html",
+      "classes": [
+        "link__alt--inline",
+        "cmp-breadcrumb-item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "PrivacyPage",
+    "methodName": "clickWebAndMobile",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Web and mobile on PrivacyPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Web and mobile",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "PrivacyPage",
+    "methodName": "clickNoticesByPlan",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_link_tabs_3",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Notices by plan on PrivacyPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_link_tabs_3",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Notices by plan",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "PrivacyPage",
+    "methodName": "clickThePersonalInformationWeCollect",
+    "selectorKey": "#link_content_section_responsivegrid_copy_responsivegrid_tabs_par_1_accordioncore_copy_3",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the The personal information we collect on PrivacyPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_copy_responsivegrid_tabs_par_1_accordioncore_copy_3",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "The personal information we collect",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "PrivacyInformationFooterPage",
+    "methodName": "clickWebAndMobilePrivacyStatement",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_515817783_link_tabs_515817783_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyInformationFooterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Web and mobile privacy statement on PrivacyInformationFooterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_515817783_link_tabs_515817783_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Web and mobile privacy statement",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "PrivacyInformationFooterPage",
+    "methodName": "clickPrivacyAndSecurityEducationalResources",
+    "selectorKey": "#content_section_responsivegrid_copy_responsivegrid_tabs_515817783_link_tabs_515817783_4",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyInformationFooterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Privacy and security educational resources on PrivacyInformationFooterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_copy_responsivegrid_tabs_515817783_link_tabs_515817783_4",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Privacy and security educational resources",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "PrivacyInformationFooterPage",
+    "methodName": "clickWhatThisPrivacyStatementCovers",
+    "selectorKey": "#link_content_section_responsivegrid_copy_responsivegrid_tabs_515817783_par_1_accordioncore_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "PrivacyInformationFooterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the What this privacy statement covers on PrivacyInformationFooterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_copy_responsivegrid_tabs_515817783_par_1_accordioncore_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "What this privacy statement covers",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "PrivacyInformationFooterPage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".d-none",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "PrivacyInformationFooterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on PrivacyInformationFooterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "cmp-zipcode--input",
+        "d-none"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "PrivacyInformationFooterPage",
+    "methodName": "enterInputElement",
+    "selectorKey": ".mapurlparamvalue",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "PrivacyInformationFooterPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the input element on PrivacyInformationFooterPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": null,
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": null,
+      "href": null,
+      "classes": [
+        "mapurlparamvalue"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HsaVsFsaPage",
+    "methodName": "clickWhatHappensToTheMoneyAtYearSEnd",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_accordioncore_4",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HsaVsFsaPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the What happens to the money at year\u2019s end? on HsaVsFsaPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_accordioncore_4",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "What happens to the money at year\u2019s end?",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  },
+  {
+    "className": "HmoPosPpoHdhpWhatsTheDifferencePage",
+    "methodName": "clickHmo",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HmoPosPpoHdhpWhatsTheDifferencePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the HMO on HmoPosPpoHdhpWhatsTheDifferencePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "HMO",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HmoPosPpoHdhpWhatsTheDifferencePage",
+    "methodName": "clickHdhpWithHsa",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_5",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HmoPosPpoHdhpWhatsTheDifferencePage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the HDHP with HSA on HmoPosPpoHdhpWhatsTheDifferencePage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_5",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "HDHP with HSA",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickRememberusername",
+    "selectorKey": "#rememberUserName",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the RememberUserName on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "enterCookieListSearch",
+    "selectorKey": "#vendor-search-handler",
+    "actionType": "fill",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "fills the Cookie list search on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickSelectedLanguageEnglish",
+    "selectorKey": "#accountmanager_lang_picker-toggle-button",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Selected Language, English on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickSignIn",
+    "selectorKey": "xpath=//button[normalize-space()=\"Sign In\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Sign In on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickCreateAccount",
+    "selectorKey": "xpath=//button[normalize-space()=\"Create Account\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Create Account on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickHelp",
+    "selectorKey": "[name=\"am-help-button\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Help on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickShowPassword",
+    "selectorKey": "xpath=//button[normalize-space()=\"Show Password\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Show Password on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickSignIn",
+    "selectorKey": "#loginButton",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Sign In on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickSignInWithACode",
+    "selectorKey": "[name=\"Sign In With a Code\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Sign In With a Code on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickGetSignInAccountHelp",
+    "selectorKey": "[name=\"Get Sign-in & Account Help\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Get Sign-in & Account Help on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickWhoCanCreateAnAccount",
+    "selectorKey": "xpath=//button[normalize-space()=\"Who can create an account?\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Who can create an account? on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickWhatYouLlNeedForRegistration",
+    "selectorKey": "xpath=//button[normalize-space()=\"What you'll need for registration\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the What you'll need for registration on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickCreateAnAccount",
+    "selectorKey": "[name=\"Create an Account\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Create an Account on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickFilter",
+    "selectorKey": "#filter-btn-handler",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Filter on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickClear",
+    "selectorKey": "#clear-filters-handler",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Clear on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickAetnaLogoLinkToHomepageOpensInNewTab",
+    "selectorKey": "xpath=//a[normalize-space()=\" aetna logo - link to homepage - opens in new tab\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the  aetna logo - link to homepage - opens in new tab on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickTermsOfUse",
+    "selectorKey": "xpath=//a[normalize-space()=\"Terms Of Use\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Terms Of Use on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickLanguageAssistanceEspaOlTiNgViT",
+    "selectorKey": "xpath=//a[normalize-space()=\"Language Assistance: \u00a0\nEspa\u00f1ol\n|\u00a0\n\u4e2d\u6587\n|\u00a0\nTi\u1ebfng Vi\u1ec7t\n|\u00a0\n\ud55c\uad6d\uc5b4\n|\u00a0\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Language Assistance: \u00a0\nEspa\u00f1ol\n|\u00a0\n\u4e2d\u6587\n|\u00a0\nTi\u1ebfng Vi\u1ec7t\n|\u00a0\n\ud55c\uad6d\uc5b4\n|\u00a0 on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickPrivacyCenter",
+    "selectorKey": "xpath=//button[normalize-space()=\"Privacy Center\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Privacy Center on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickMedicarePrivacyCenter",
+    "selectorKey": "xpath=//button[normalize-space()=\"Medicare Privacy Center\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Medicare Privacy Center on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "AetnaMemberLogInPage",
+    "methodName": "clickPoweredByOnetrustOpensInANewTab",
+    "selectorKey": "xpath=//a[normalize-space()=\"Powered by OneTrust Opens in a new Tab\"]",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "AetnaMemberLogInPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Powered by OneTrust Opens in a new Tab on AetnaMemberLogInPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HumanVerificationPage",
+    "methodName": "selectSelectLanguage",
+    "selectorKey": "xpath=//select[normalize-space()=\"Select language\"]",
+    "actionType": "select",
+    "parameterNames": [
+      "value"
+    ],
+    "returnType": "HumanVerificationPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "selects the Select language on HumanVerificationPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "HumanVerificationPage",
+    "methodName": "clickBegin",
+    "selectorKey": "#amzn-captcha-verify-button",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "HumanVerificationPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Begin on HumanVerificationPage",
+    "allAttributes": {},
+    "selectorFallbacks": []
+  },
+  {
+    "className": "SuicideSignsAndSupportPage",
+    "methodName": "clickFactsAboutSuicide",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "SuicideSignsAndSupportPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Facts about suicide on SuicideSignsAndSupportPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_1",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Facts about suicide",
+      "href": null,
+      "classes": [
+        "tab__item",
+        "tab__item--active"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": []
+  },
+  {
+    "className": "SuicideSignsAndSupportPage",
+    "methodName": "clickSignsToLookOutFor",
+    "selectorKey": "#content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "SuicideSignsAndSupportPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the Signs to look out for on SuicideSignsAndSupportPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "content_section_responsivegrid_responsivegrid_tabs_link_tabs_2",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "Signs to look out for",
+      "href": null,
+      "classes": [
+        "tab__item"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".tab__item"
+    ]
+  },
+  {
+    "className": "FederalNoSurprisesActPage",
+    "methodName": "clickWhatStepsCanITakeIfIBelieveIVeBeenWronglyBilled",
+    "selectorKey": "#link_content_section_responsivegrid_responsivegrid_accordioncore_6",
+    "actionType": "click",
+    "parameterNames": [],
+    "returnType": "FederalNoSurprisesActPage",
+    "isNavigation": false,
+    "navigatesTo": "",
+    "description": "clicks the What steps can I take if I believe I\u2019ve been wrongly billed? on FederalNoSurprisesActPage",
+    "allAttributes": {
+      "dataTestId": null,
+      "ariaLabel": null,
+      "id": "link_content_section_responsivegrid_responsivegrid_accordioncore_6",
+      "name": null,
+      "type": null,
+      "placeholder": null,
+      "title": null,
+      "alt": null,
+      "value": null,
+      "textContent": "What steps can I take if I believe I\u2019ve been wrongly billed?",
+      "href": null,
+      "classes": [
+        "accordian__button"
+      ],
+      "dataAttrs": {},
+      "required": false,
+      "readonly": false
+    },
+    "selectorFallbacks": [
+      ".accordian__button"
+    ]
+  }
+]

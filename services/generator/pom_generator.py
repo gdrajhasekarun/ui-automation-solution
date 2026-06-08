@@ -20,18 +20,35 @@ _GENERIC_LABELS = {"input", "button", "element", "text", "select", "checkbox", "
 _INTERNAL_ID_RE = re.compile(r'[0-9a-f]{8}|FormSession|FormItem|PageItem|NavigationButton|__VIEWSTATE', re.IGNORECASE)
 
 
+def _ascii_ratio(s: str) -> float:
+    """Fraction of printable characters that are ASCII letters/digits."""
+    printable = [c for c in s if not c.isspace()]
+    if not printable:
+        return 1.0
+    ascii_chars = [c for c in printable if ord(c) < 128 and (c.isalnum() or c in "-_")]
+    return len(ascii_chars) / len(printable)
+
+
 def _semantic_words(label: str, el: dict | None = None, selector_key: str = "") -> list[str]:
     """
     Return the most semantic word list for naming a constant or method.
     Priority: label → primary attribute value → selectorKey.
-    Falls back gracefully when any source looks like an internal ID.
+    Falls back gracefully when any source looks like an internal ID or multi-language text.
     """
     def clean(s: str) -> list[str]:
         return [w for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w]
 
     label_words = clean(label)
-    # Label is usable if it's short, non-generic, and has no internal-ID patterns
-    if label_words and label.lower() not in _GENERIC_LABELS and not _INTERNAL_ID_RE.search(label):
+    # Reject label if: empty, generic, internal ID, mostly non-ASCII (multi-language text),
+    # or excessively long (scraped block text / concatenated option list)
+    label_usable = (
+        label_words
+        and label.lower() not in _GENERIC_LABELS
+        and not _INTERNAL_ID_RE.search(label)
+        and _ascii_ratio(label) >= 0.6
+        and len(label) <= 60
+    )
+    if label_usable:
         return label_words[:6]
 
     # Try the primary attribute value (e.g. name="dd-country" → ["dd", "country"])
@@ -70,6 +87,34 @@ def _const_name(label: str, el: dict | None = None, selector_key: str = "") -> s
     return name
 
 
+def _sanitise_xpath(xpath: str) -> str:
+    """
+    Rewrite an XPath that matches on exact multi-line or non-ASCII text content
+    into a robust contains()-based expression using only the first ASCII fragment.
+    e.g. //a[normalize-space()="Language Assistance:\n  Español\n..."]
+      →  //a[contains(normalize-space(), "Language Assistance")]
+    """
+    # Detect: normalize-space() = "..." where the string is long / contains newlines / non-ASCII
+    m = re.search(r'normalize-space\(\)\s*=\s*["\']([^"\']+)["\']', xpath)
+    if m:
+        raw_text = m.group(1)
+        has_newline = "\n" in raw_text or "\r" in raw_text or "\xa0" in raw_text
+        has_non_ascii = any(ord(c) > 127 for c in raw_text)
+        if has_newline or has_non_ascii or len(raw_text) > 60:
+            # Extract only the first ASCII clause (up to first non-ASCII char or newline/pipe)
+            first_clause = re.split(r'[\n\r\xa0|]', raw_text)[0].strip()
+            # Keep only printable ASCII
+            first_clause = re.sub(r'[^\x20-\x7E]', '', first_clause).strip()
+            if first_clause:
+                rewritten = re.sub(
+                    r'normalize-space\(\)\s*=\s*["\'][^"\']+["\']',
+                    f'contains(normalize-space(), "{first_clause}")',
+                    xpath,
+                )
+                return rewritten
+    return xpath
+
+
 def _parse_locator(selector_key: str) -> tuple[str, str]:
     """
     Convert a selectorKey string to (type, value) for Locator construction.
@@ -81,7 +126,7 @@ def _parse_locator(selector_key: str) -> tuple[str, str]:
     """
     sk = selector_key.strip()
     if sk.startswith("xpath="):
-        return "xpath", sk[6:]
+        return "xpath", _sanitise_xpath(sk[6:])
     if sk.startswith("#") and " " not in sk:
         return "id", sk[1:]
     # [name="value"] — extract the value so By.name() is used
