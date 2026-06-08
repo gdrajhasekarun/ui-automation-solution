@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -40,6 +41,41 @@ async def _notify(dashboard_url: str, app_id: str, message: str, level: str = "I
 
 
 async def discover_pages(
+    app_url: str,
+    app_id: str,
+    seed_data: dict,
+    dashboard_url: str,
+) -> list[dict]:
+    loop = asyncio.get_running_loop()
+    if type(loop).__name__ == "WindowsSelectorEventLoop":
+        logger.info("Windows SelectorEventLoop detected — running Crawl4AI in a ProactorEventLoop thread")
+        return await asyncio.to_thread(
+            _run_in_proactor, app_url, app_id, seed_data, dashboard_url
+        )
+    return await _discover_pages_impl(app_url, app_id, seed_data, dashboard_url)
+
+
+def _run_in_proactor(
+    app_url: str,
+    app_id: str,
+    seed_data: dict,
+    dashboard_url: str,
+) -> list[dict]:
+    import sys
+    if sys.platform != "win32":
+        raise RuntimeError("ProactorEventLoop is only available on Windows")
+    loop = asyncio.ProactorEventLoop()  # type: ignore[attr-defined]
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            _discover_pages_impl(app_url, app_id, seed_data, dashboard_url)
+        )
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
+
+
+async def _discover_pages_impl(
     app_url: str,
     app_id: str,
     seed_data: dict,
