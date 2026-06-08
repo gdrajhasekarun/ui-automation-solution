@@ -11,8 +11,10 @@ def _find_excel(framework_dir: str) -> str | None:
     Uses pathlib for cross-platform path handling (Windows and Mac)."""
     if not framework_dir:
         return None
-    base = Path(framework_dir) / "src" / "main" / "resources"
+    base = Path(framework_dir).expanduser().resolve() / "src" / "main" / "resources"
+    logger.info(f"Looking for Excel in: {base}")
     if not base.is_dir():
+        logger.warning(f"Resources dir not found: {base}")
         return None
     for pattern in ("**/*.xlsx", "**/*.xls"):
         matches = sorted(base.glob(pattern))
