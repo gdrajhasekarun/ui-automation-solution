@@ -9,5 +9,9 @@ set SHARED_DIR=%ROOT%\shared
 set DASHBOARD_URL=http://localhost:8000
 set GENERATOR_URL=http://localhost:8002
 cd /d "%SVC_DIR%"
+rem Use --reload for development (hot-reload on file changes).
+rem For stable crawl runs on Windows, use the no-reload line below to avoid
+rem loop variability introduced by the reloader worker process:
+rem   "%UVICORN%" main:app --port 8001
 "%UVICORN%" main:app --port 8001 --reload
 pause

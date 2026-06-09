@@ -1,11 +1,18 @@
+import asyncio
 import logging
 import os
+import sys
 import traceback
 import uuid
 from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI
+
+# Fix A2: ensure Proactor loop from the start on Windows so Playwright can spawn subprocesses.
+# A1 (per-phase wrapper) is still authoritative; this is defense-in-depth.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())  # type: ignore[attr-defined]
 
 from config import DASHBOARD_URL, GENERATOR_URL, PORT, SHARED_DIR
 from diff_engine import run_diff

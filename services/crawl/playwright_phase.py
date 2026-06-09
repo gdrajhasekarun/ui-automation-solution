@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import re
+import sys
 
 import httpx
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -336,7 +338,76 @@ async def _trace_page(page: Page, url: str, dashboard_url: str, app_id: str) -> 
 _TRACE_CONCURRENCY = 4
 
 
+async def _launch_browser(pw):
+    """
+    Launch Chromium with a fallback chain:
+      1. PLAYWRIGHT_CHROMIUM_PATH / PLAYWRIGHT_EXECUTABLE_PATH env var (manual install)
+      2. PLAYWRIGHT_CHANNEL env var (e.g. "chrome", "msedge")
+      3. Bundled Chromium (default)
+      4. Fallback to system "chrome" then "msedge" channel
+    """
+    exe_path = os.environ.get("PLAYWRIGHT_CHROMIUM_PATH") or os.environ.get("PLAYWRIGHT_EXECUTABLE_PATH")
+    if exe_path:
+        logger.info(f"Launching browser from PLAYWRIGHT_CHROMIUM_PATH: {exe_path}")
+        return await pw.chromium.launch(headless=True, executable_path=exe_path)
+
+    channel = os.environ.get("PLAYWRIGHT_CHANNEL")
+    if channel:
+        logger.info(f"Launching browser via PLAYWRIGHT_CHANNEL: {channel}")
+        return await pw.chromium.launch(headless=True, channel=channel)
+
+    try:
+        logger.info("Launching bundled Chromium")
+        return await pw.chromium.launch(headless=True)
+    except Exception as e:
+        logger.warning(f"Bundled Chromium failed ({e}) — trying system Chrome")
+
+    for fallback_channel in ("chrome", "msedge"):
+        try:
+            logger.info(f"Trying channel fallback: {fallback_channel}")
+            return await pw.chromium.launch(headless=True, channel=fallback_channel)
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        "No usable browser found. Set PLAYWRIGHT_CHROMIUM_PATH to your browser executable "
+        "or PLAYWRIGHT_CHANNEL to 'chrome'/'msedge', or run 'playwright install chromium'."
+    )
+
+
 async def trace_interactions(
+    page_inventory: list[dict],
+    app_id: str,
+    seed_data: dict,
+    dashboard_url: str,
+) -> list[dict]:
+    loop = asyncio.get_running_loop()
+    if type(loop).__name__ == "WindowsSelectorEventLoop":
+        logger.info("Windows SelectorEventLoop detected — running Playwright in a ProactorEventLoop thread")
+        return await asyncio.to_thread(_run_in_proactor, page_inventory, app_id, seed_data, dashboard_url)
+    return await _trace_interactions_impl(page_inventory, app_id, seed_data, dashboard_url)
+
+
+def _run_in_proactor(
+    page_inventory: list[dict],
+    app_id: str,
+    seed_data: dict,
+    dashboard_url: str,
+) -> list[dict]:
+    if sys.platform != "win32":
+        raise RuntimeError("ProactorEventLoop is only available on Windows")
+    loop = asyncio.ProactorEventLoop()  # type: ignore[attr-defined]
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            _trace_interactions_impl(page_inventory, app_id, seed_data, dashboard_url)
+        )
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
+
+
+async def _trace_interactions_impl(
     page_inventory: list[dict],
     app_id: str,
     seed_data: dict,
@@ -346,7 +417,7 @@ async def trace_interactions(
     blocklist = seed_data.get("blocklist", [])
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+        browser = await _launch_browser(pw)
         # Single shared context so auth cookies/session are available to all parallel pages
         context = await browser.new_context()
         auth_page = await context.new_page()
