@@ -1,3 +1,9 @@
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed — env vars must be set manually
+
 import asyncio
 import logging
 import os
@@ -96,6 +102,111 @@ def _run_in_proactor(
         loop.close()
 
 
+async def _login_with_playwright(
+    app_url: str,
+    auth: dict,
+    seed_data: dict,
+    dashboard_url: str,
+    app_id: str,
+    headless: bool = True,
+) -> tuple[list, str]:
+    """
+    Authenticate using Playwright directly — full browser control, no Crawl4AI layers.
+    Returns: (session_cookies, post_login_url)
+    """
+    from playwright.async_api import async_playwright
+
+    login_url   = resolve_login_url(auth, app_url)
+    strategy    = auth.get("strategy", "form")
+    fields      = auth.get("fields", {})
+    submit_sel  = auth.get("submitSelector", "#loginBtn")
+    success_ind = auth.get("successIndicator", "")
+    if success_ind.startswith("${"):
+        success_ind = resolve_env(success_ind)
+
+    logger.info(f"Playwright login — navigating to {login_url}")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(
+            headless=headless,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        context = await browser.new_context(ignore_https_errors=True)
+        page = await context.new_page()
+
+        try:
+            await page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
+            logger.info(f"Login page loaded: {page.url}")
+
+            if strategy == "cookie":
+                cookie_cfg = auth.get("cookie", {})
+                await context.add_cookies([{
+                    "name":   cookie_cfg["name"],
+                    "value":  cookie_cfg["value"],
+                    "domain": cookie_cfg["domain"],
+                    "path":   cookie_cfg.get("path", "/"),
+                }])
+                await page.goto(app_url, wait_until="domcontentloaded", timeout=30000)
+            else:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+
+                for selector, env_value in fields.items():
+                    value = resolve_env(env_value)
+                    try:
+                        await page.wait_for_selector(selector, timeout=10000)
+                        await page.fill(selector, value)
+                        logger.info(f"Filled: {selector}")
+                    except Exception as e:
+                        logger.warning(f"Could not fill {selector}: {e}")
+
+                await page.wait_for_timeout(500)
+
+                try:
+                    await page.wait_for_selector(submit_sel, timeout=10000)
+                    await page.click(submit_sel)
+                    logger.info(f"Clicked submit: {submit_sel}")
+                except Exception as e:
+                    logger.warning(f"Submit click failed ({e}) — trying form.submit()")
+                    await page.evaluate(
+                        "() => { var f = document.querySelector('form'); if(f) f.submit(); }"
+                    )
+
+                if success_ind:
+                    try:
+                        await page.wait_for_selector(success_ind, timeout=20000)
+                        logger.info(f"Success indicator found: {success_ind}")
+                    except Exception:
+                        logger.warning(
+                            f"Success indicator '{success_ind}' not found — "
+                            "checking if URL changed from login page"
+                        )
+                else:
+                    try:
+                        await page.wait_for_url(
+                            lambda url: login_url not in url,
+                            timeout=20000,
+                        )
+                        logger.info("URL changed from login page — login likely successful")
+                    except Exception:
+                        logger.warning("URL did not change — login may have failed")
+
+            post_login_url = page.url
+            logger.info(f"Post-login URL: {post_login_url}")
+
+            if login_url in post_login_url:
+                raise CrawlAuthError(
+                    f"Login silently failed — still on login page. "
+                    f"Check APP_USERNAME and APP_PASSWORD. URL: {post_login_url}"
+                )
+
+            cookies = await context.cookies()
+            logger.info(f"Captured {len(cookies)} session cookies")
+            return cookies, post_login_url
+
+        finally:
+            await browser.close()
+
+
 async def _discover_pages_impl(
     app_url: str,
     app_id: str,
@@ -107,162 +218,60 @@ async def _discover_pages_impl(
     except ImportError:
         raise ImportError("pip install crawl4ai")
 
-    auth = seed_data.get("auth", {})
-    strategy = auth.get("strategy", "none")
+    auth      = seed_data.get("auth", {})
     blocklist = seed_data.get("blocklist", [])
-
-    _headless = os.environ.get("CRAWL_HEADLESS", "true").strip().lower() != "false"
-    if not _headless:
-        logger.info("=" * 55)
-        logger.info("HEADED MODE — browser window will open")
-        logger.info("Watch the browser to debug login issues")
-        logger.info("Set CRAWL_HEADLESS=true to hide the browser")
-        logger.info("=" * 55)
-
-    browser_config = BrowserConfig(
-        headless=_headless,
-        verbose=not _headless,
-    )
-
     max_pages  = int(seed_data.get("max_pages", 60))
     max_depth  = int(seed_data.get("max_depth", 2))
     batch_size = int(seed_data.get("batch_size", 8))
 
-    # ── No auth — public site, crawl directly
+    _headless_raw = os.environ.get("CRAWL_HEADLESS", "true").strip().lower()
+    _headless = _headless_raw != "false"
+    print(f"[CRAWL] CRAWL_HEADLESS env = '{_headless_raw}' → headless={_headless}")
+
+    if not _headless:
+        logger.info("HEADED MODE — browser window will open")
+
+    strategy = auth.get("strategy", "none")
+
+    # ── No auth — crawl public site directly ─────────────────────────
     if strategy == "none" or not _has_real_credentials(auth):
-        logger.info("No auth credentials — crawling without login")
-        await _notify(dashboard_url, app_id, f"Crawling as public site (max {max_pages} pages, depth ≤{max_depth})")
+        logger.info("No auth — crawling as public site")
+        await _notify(dashboard_url, app_id, "Crawling as public site")
+        browser_config = BrowserConfig(headless=_headless, verbose=not _headless)
         async with AsyncWebCrawler(config=browser_config) as crawler:
-            return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
-
-    # ── Cookie auth
-    if strategy == "cookie":
-        cookie_cfg = auth.get("cookie", {})
-        browser_config = BrowserConfig(
-            headless=_headless,
-            verbose=not _headless,
-            cookies=[{
-                "name":   cookie_cfg["name"],
-                "value":  cookie_cfg["value"],
-                "domain": cookie_cfg["domain"],
-                "path":   cookie_cfg.get("path", "/"),
-            }],
-        )
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
-
-    # ── Auto auth — zero-config form detection
-    if strategy == "auto":
-        from auth_detect import auto_credentials, build_autofill_js
-        identity, secret = auto_credentials(auth)
-        login_url = resolve_login_url(auth, app_url)
-        logger.info(f"Login URL: {login_url}")
-        success_indicator = auth.get("successIndicator")
-        js_code = build_autofill_js(identity, secret, success_indicator)
-        wait_for = (
-            f"css:{success_indicator}" if success_indicator
-            else "js:() => !document.querySelector('input[type=password]')"
-        )
-        async with AsyncWebCrawler(config=browser_config) as crawler:
-            from crawl4ai import CrawlerRunConfig, CacheMode
-            auth_result = await crawler.arun(
-                url=login_url,
-                config=CrawlerRunConfig(
-                    js_code=js_code,
-                    wait_for=wait_for,
-                    cache_mode=CacheMode.BYPASS,
-                ),
+            return await _crawl_pages(
+                crawler, app_url, app_id, dashboard_url,
+                blocklist, max_pages, max_depth, batch_size,
             )
-            if not auth_result.success:
-                raise CrawlAuthError(f"Auto-login failed at {login_url} — check APP_USERNAME/APP_PASSWORD env vars")
-            logger.info("Auto-login successful")
-            # Seed crawl from post-login URL — not the original homepage
-            # auth_result.url is where the browser actually landed after auth
-            post_login_url = auth_result.url or app_url
-            logger.info(f"Post-login URL: {post_login_url}")
-            await _notify(dashboard_url, app_id, f"Auto-login successful — crawling from {post_login_url}")
-            return await _crawl_pages(crawler, post_login_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
 
-    # ── Form auth
-    fields = auth.get("fields", {})
-    field_keys = list(fields.keys())
-    field_vals = list(fields.values())
+    # ── All authenticated strategies — Playwright logs in first ──────
+    # Playwright gives direct browser control with no Crawl4AI injection layers.
+    logger.info(f"Auth strategy: {strategy} — logging in via Playwright first")
+    await _notify(dashboard_url, app_id, "Authenticating via Playwright...")
 
-    if len(field_keys) >= 2:
-        val0 = resolve_env(field_vals[0]).replace("\\", "\\\\").replace("'", "\\'")
-        val1 = resolve_env(field_vals[1]).replace("\\", "\\\\").replace("'", "\\'")
-        submit_sel = auth.get("submitSelector", "input[type='submit']")
-        login_js = f"""
-(function() {{
-    // Direct value assignment — correct for JSF/Struts managed beans.
-    // Do NOT use React nativeSetter or dispatchEvent — JSF ignores browser events.
-    var identityEl = document.querySelector('{field_keys[0]}');
-    var secretEl   = document.querySelector('{field_keys[1]}');
-    if (identityEl) identityEl.value = '{val0}';
-    if (secretEl)   secretEl.value   = '{val1}';
+    session_cookies, post_login_url = await _login_with_playwright(
+        app_url, auth, seed_data, dashboard_url, app_id, _headless
+    )
 
-    // Try submit button first, fall back to form.submit() for JSF
-    var submitBtn = document.querySelector('{submit_sel}');
-    if (submitBtn) {{
-        submitBtn.click();
-    }} else {{
-        var form = identityEl ? identityEl.closest('form') : document.querySelector('form');
-        if (form) form.submit();
-    }}
-}})();
-"""
-    else:
-        submit_sel = auth.get("submitSelector", "input[type='submit']")
-        login_js = f"""
-(function() {{
-    var submitBtn = document.querySelector('{submit_sel}');
-    if (submitBtn) {{
-        submitBtn.click();
-    }} else {{
-        var form = document.querySelector('form');
-        if (form) form.submit();
-    }}
-}})();
-"""
+    if not session_cookies:
+        raise CrawlAuthError("Playwright login failed — no session cookies captured")
 
-    login_url = resolve_login_url(auth, app_url)
-    logger.info(f"Login URL: {login_url}")
+    logger.info(f"Login successful — {len(session_cookies)} cookies captured")
+    logger.info(f"Post-login URL: {post_login_url}")
+    await _notify(dashboard_url, app_id,
+        f"Login successful — crawling from {post_login_url}", "SUCCESS")
+
+    browser_config = BrowserConfig(
+        headless=_headless,
+        verbose=not _headless,
+        cookies=session_cookies,
+    )
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
-        from crawl4ai import CrawlerRunConfig, CacheMode
-        success_indicator = auth.get("successIndicator", "")
-        if success_indicator:
-            wait_for = f"css:{success_indicator}"
-        else:
-            # No successIndicator — wait for password field to disappear
-            wait_for = "js:() => !document.querySelector(\"[name='j_password']\")"
-
-        auth_result = await crawler.arun(
-            url=login_url,
-            config=CrawlerRunConfig(
-                js_code=login_js,
-                wait_for=wait_for,
-                page_timeout=30000,   # JSF apps are slower — allow 30s
-                cache_mode=CacheMode.BYPASS,
-            ),
+        return await _crawl_pages(
+            crawler, post_login_url, app_id, dashboard_url,
+            blocklist, max_pages, max_depth, batch_size,
         )
-        if not auth_result.success:
-            raise CrawlAuthError(f"Login failed at {login_url}")
-
-        # Secondary check — detect silent failure (JSF bounced back to login page)
-        if auth_result.url and login_url in auth_result.url:
-            raise CrawlAuthError(
-                f"Login silently failed — still on login page after submit. "
-                f"Check APP_USERNAME and APP_PASSWORD are correct. "
-                f"Current URL: {auth_result.url}"
-            )
-
-        logger.info("Form authentication successful")
-        # Seed crawl from post-login URL — not the original homepage
-        post_login_url = auth_result.url or app_url
-        logger.info(f"Post-login URL: {post_login_url}")
-        await _notify(dashboard_url, app_id, f"Authentication successful — crawling from {post_login_url}")
-        return await _crawl_pages(crawler, post_login_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
 
 
 _ERROR_TITLES = {

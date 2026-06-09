@@ -418,10 +418,19 @@ async def _trace_interactions_impl(
     async with async_playwright() as pw:
         browser = await _launch_browser(pw)
         # Single shared context so auth cookies/session are available to all parallel pages
-        context = await browser.new_context()
-        auth_page = await context.new_page()
-        await _authenticate(auth_page, context, seed_data, app_url)
-        await auth_page.close()
+        context = await browser.new_context(ignore_https_errors=True)
+
+        auth = seed_data.get("auth", {})
+        strategy = auth.get("strategy", "none")
+        if strategy != "none":
+            from crawl4ai_phase import _login_with_playwright
+            _headless = os.environ.get("CRAWL_HEADLESS", "true").strip().lower() != "false"
+            session_cookies, _ = await _login_with_playwright(
+                app_url, auth, seed_data, dashboard_url, app_id, _headless
+            )
+            for cookie in session_cookies:
+                await context.add_cookies([cookie])
+            logger.info(f"Playwright phase: injected {len(session_cookies)} session cookies")
         await _notify(dashboard_url, app_id, "Playwright authentication complete")
 
         if not page_inventory:
