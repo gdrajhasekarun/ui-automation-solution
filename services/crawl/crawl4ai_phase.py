@@ -12,6 +12,23 @@ class CrawlAuthError(Exception):
     pass
 
 
+def resolve_login_url(auth: dict, app_url: str) -> str:
+    """
+    Resolve the full login URL using priority order:
+      1. auth["loginUrl"] if set — explicit config wins
+      2. APP_LOGIN_PATH env var — controllable from .env
+      3. "/login" — default fallback
+    """
+    login_path = auth.get("loginUrl", "").strip()
+    if not login_path:
+        login_path = os.environ.get("APP_LOGIN_PATH", "").strip()
+    if not login_path:
+        login_path = "/login"
+    if login_path.startswith("http"):
+        return login_path
+    return app_url.rstrip("/") + "/" + login_path.lstrip("/")
+
+
 def resolve_env(value: str) -> str:
     if value.startswith("${") and value.endswith("}"):
         var_name = value[2:-1]
@@ -127,9 +144,8 @@ async def _discover_pages_impl(
     if strategy == "auto":
         from auth_detect import auto_credentials, build_autofill_js
         identity, secret = auto_credentials(auth)
-        login_url = auth.get("loginUrl", "/login")
-        if not login_url.startswith("http"):
-            login_url = app_url.rstrip("/") + login_url
+        login_url = resolve_login_url(auth, app_url)
+        logger.info(f"Login URL: {login_url}")
         success_indicator = auth.get("successIndicator")
         js_code = build_autofill_js(identity, secret, success_indicator)
         wait_for = (
@@ -198,9 +214,8 @@ async def _discover_pages_impl(
 }})();
 """
 
-    login_url = auth.get("loginUrl", "/login")
-    if not login_url.startswith("http"):
-        login_url = app_url.rstrip("/") + login_url
+    login_url = resolve_login_url(auth, app_url)
+    logger.info(f"Login URL: {login_url}")
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
         from crawl4ai import CrawlerRunConfig, CacheMode

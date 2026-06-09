@@ -6,6 +6,7 @@ import sys
 
 import httpx
 from playwright.async_api import async_playwright, Page, BrowserContext
+from crawl4ai_phase import resolve_login_url
 
 logger = logging.getLogger("crawl-service.playwright")
 
@@ -48,9 +49,8 @@ async def _authenticate(page: Page, context: BrowserContext, seed_data: dict, ap
     if strategy == "auto":
         from auth_detect import DETECTOR_FN_JS, auto_credentials
         identity, secret = auto_credentials(auth)
-        login_url = auth.get("loginUrl", "/login")
-        if not login_url.startswith("http"):
-            login_url = app_url.rstrip("/") + login_url
+        login_url = resolve_login_url(auth, app_url)
+        logger.info(f"Login URL: {login_url}")
         await page.goto(login_url, wait_until="domcontentloaded")
         success_indicator = auth.get("successIndicator")
 
@@ -99,9 +99,8 @@ async def _authenticate(page: Page, context: BrowserContext, seed_data: dict, ap
         return
 
     if strategy == "form":
-        login_url = auth.get("loginUrl", "/login")
-        if not login_url.startswith("http"):
-            login_url = app_url.rstrip("/") + login_url
+        login_url = resolve_login_url(auth, app_url)
+        logger.info(f"Login URL: {login_url}")
         await page.goto(login_url, wait_until="domcontentloaded")
         for selector, env_key in auth.get("fields", {}).items():
             value = resolve_env(env_key)
