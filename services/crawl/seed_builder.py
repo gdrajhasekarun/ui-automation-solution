@@ -3,6 +3,14 @@ import logging
 import os
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    # Walk up from this file to find the repo root .env
+    _env_path = Path(__file__).parent.parent.parent / ".env"
+    load_dotenv(dotenv_path=_env_path, override=False)
+except ImportError:
+    pass  # python-dotenv not installed — rely on env vars set by start.bat / shell
+
 logger = logging.getLogger("crawl-service.seed_builder")
 
 
