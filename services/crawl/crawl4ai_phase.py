@@ -149,8 +149,12 @@ async def _discover_pages_impl(
             if not auth_result.success:
                 raise CrawlAuthError(f"Auto-login failed at {login_url} — check APP_USERNAME/APP_PASSWORD env vars")
             logger.info("Auto-login successful")
-            await _notify(dashboard_url, app_id, "Auto-login successful — starting crawl")
-            return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
+            # Seed crawl from post-login URL — not the original homepage
+            # auth_result.url is where the browser actually landed after auth
+            post_login_url = auth_result.url or app_url
+            logger.info(f"Post-login URL: {post_login_url}")
+            await _notify(dashboard_url, app_id, f"Auto-login successful — crawling from {post_login_url}")
+            return await _crawl_pages(crawler, post_login_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
 
     # ── Form auth
     fields = auth.get("fields", {})
@@ -184,8 +188,11 @@ async def _discover_pages_impl(
             raise CrawlAuthError(f"Login failed at {login_url}")
 
         logger.info("Crawl4AI authentication successful")
-        await _notify(dashboard_url, app_id, "Authentication successful")
-        return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
+        # Seed crawl from post-login URL — not the original homepage
+        post_login_url = auth_result.url or app_url
+        logger.info(f"Post-login URL: {post_login_url}")
+        await _notify(dashboard_url, app_id, f"Authentication successful — crawling from {post_login_url}")
+        return await _crawl_pages(crawler, post_login_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
 
 
 _ERROR_TITLES = {
@@ -523,7 +530,8 @@ async def _crawl_pages(
                     lnk["href"] for lnk in internal_links
                     if lnk.get("href") and lnk["href"] not in visited and not _blocked(lnk["href"])
                 ]
-                elements = extract_interactable_elements(result.cleaned_html or result.html or "")
+                # Use raw html — cleaned_html strips form inputs (email, password fields disappear)
+                elements = extract_interactable_elements(result.html or result.cleaned_html or "")
                 pages_discovered.append({
                     "url":         url,
                     "title":       page_title,
