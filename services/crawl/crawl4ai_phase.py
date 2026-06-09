@@ -51,7 +51,7 @@ async def discover_pages(
     dashboard_url: str,
 ) -> list[dict]:
     loop = asyncio.get_running_loop()
-    if type(loop).__name__ == "WindowsSelectorEventLoop":
+    if type(loop).__name__ == "_WindowsSelectorEventLoop":
         logger.info("Windows SelectorEventLoop detected — running Crawl4AI in a ProactorEventLoop thread")
         return await asyncio.to_thread(
             _run_in_proactor, app_url, app_id, seed_data, dashboard_url

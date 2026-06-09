@@ -92,12 +92,25 @@ def build_seed(app_id: str, app_url: str, framework_dir: str, shared_dir: str) -
     """
     out_path = os.path.join(shared_dir, "config", "seed_data.json")
 
-    # 1) Load committed base
+    # 1) Load committed base and resolve ${VAR} placeholders in the auth section from env
     seed: dict = {}
     if os.path.exists(out_path):
         try:
             with open(out_path) as f:
                 seed = json.load(f)
+            # Resolve credential placeholders so both phases receive actual values
+            auth = seed.get("auth", {})
+            for key in ("identityEnv", "secretEnv"):
+                placeholder = auth.get(key, "")
+                if placeholder.startswith("${") and placeholder.endswith("}"):
+                    var_name = placeholder[2:-1]
+                    resolved = os.environ.get(var_name, "")
+                    if resolved:
+                        auth[key] = resolved
+                    else:
+                        logger.warning(f"Env var '{var_name}' not set — {key} will be empty")
+            if auth:
+                seed["auth"] = auth
             logger.info("Loaded existing seed_data.json as base")
         except Exception as e:
             logger.warning(f"Could not parse existing seed_data.json — starting empty: {e}")
