@@ -43,6 +43,59 @@ async def _authenticate(page: Page, context: BrowserContext, seed_data: dict, ap
         }])
         return
 
+    if strategy == "auto":
+        from auth_detect import DETECTOR_FN_JS, auto_credentials
+        identity, secret = auto_credentials(auth)
+        login_url = auth.get("loginUrl", "/login")
+        if not login_url.startswith("http"):
+            login_url = app_url.rstrip("/") + login_url
+        await page.goto(login_url, wait_until="domcontentloaded")
+        success_indicator = auth.get("successIndicator")
+
+        for _round in range(2):  # up to 2 rounds for multi-step login
+            try:
+                detected = await page.evaluate(DETECTOR_FN_JS)
+            except Exception as e:
+                logger.warning(f"Auto-detect failed (round {_round+1}): {e}")
+                break
+            identity_sel = detected.get("identitySel")
+            secret_sel   = detected.get("secretSel")
+            submit_sel   = detected.get("submitSel")
+            if identity_sel:
+                try:
+                    await page.fill(identity_sel, identity)
+                except Exception as e:
+                    logger.warning(f"Could not fill identity field {identity_sel}: {e}")
+            if secret_sel:
+                try:
+                    await page.fill(secret_sel, secret)
+                except Exception as e:
+                    logger.warning(f"Could not fill secret field {secret_sel}: {e}")
+            if submit_sel:
+                try:
+                    await page.click(submit_sel)
+                except Exception as e:
+                    logger.warning(f"Could not click submit {submit_sel}: {e}")
+                    if secret_sel:
+                        await page.press(secret_sel, "Enter")
+            elif secret_sel:
+                await page.press(secret_sel, "Enter")
+            await page.wait_for_load_state("networkidle", timeout=15000)
+            if success_indicator:
+                try:
+                    await page.wait_for_selector(success_indicator, timeout=8000)
+                    logger.info(f"Auto-login success (round {_round+1})")
+                    return
+                except Exception:
+                    pass
+            else:
+                has_password = await page.query_selector("input[type=password]") is not None
+                if not has_password and login_url not in page.url:
+                    logger.info(f"Auto-login success (round {_round+1})")
+                    return
+        logger.warning("Auto-login: could not confirm success after 2 rounds — continuing anyway")
+        return
+
     if strategy == "form":
         login_url = auth.get("loginUrl", "/login")
         if not login_url.startswith("http"):

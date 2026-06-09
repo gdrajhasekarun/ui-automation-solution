@@ -1,13 +1,9 @@
 {
   "auth": {
-    "strategy": "none",
+    "strategy": "auto",
     "loginUrl": "/login",
-    "fields": {
-      "#email": "${APP_USERNAME}",
-      "#password": "${APP_PASSWORD}"
-    },
-    "submitSelector": "#submit-btn",
-    "successIndicator": "#dashboard"
+    "identityEnv": "${APP_USERNAME}",
+    "secretEnv": "${APP_PASSWORD}"
   },
   "blocklist": [
     "/logout",
@@ -16,14 +12,5 @@
     "/admin/reset"
   ],
   "appId": "aetna-healthcare",
-  "appUrl": "https://www.aetna.com/",
-  "form_pool": {
-    "email": "testuser@poc.test",
-    "password": "TestPass123!",
-    "text": "Sample input",
-    "number": "42",
-    "phone": "5551234567",
-    "date": "2024-06-01",
-    "select": "Option 1"
-  }
+  "appUrl": "https://www.aetna.com/"
 }

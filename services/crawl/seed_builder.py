@@ -84,23 +84,38 @@ def _read_excel_seed(xlsx_path: str) -> dict:
 
 def build_seed(app_id: str, app_url: str, framework_dir: str, shared_dir: str) -> dict:
     """
-    Build and persist seed_data.json.
-    - If an Excel file exists in src/main/resources: load all its key/value pairs.
-    - If no Excel: seed contains only appId and appUrl — no form data, no auth fields.
+    Build and persist seed_data.json using a merge strategy (low → high priority):
+      1. Existing shared/config/seed_data.json  — committed base (auth, blocklist, etc.)
+      2. Excel flat key/values, if found         — overrides individual keys
+      3. Runtime app_id / app_url               — always win
+    This preserves the auth block across runs even when no Excel is present.
     """
-    xlsx = _find_excel(framework_dir) if framework_dir else None
-
-    if xlsx:
-        logger.info(f"Building seed from Excel: {xlsx}")
-        seed = _read_excel_seed(xlsx)
-    else:
-        logger.info("No Excel found — seed will contain only appId and appUrl")
-        seed = {}
-
-    seed["appId"]  = app_id
-    seed["appUrl"] = app_url
-
     out_path = os.path.join(shared_dir, "config", "seed_data.json")
+
+    # 1) Load committed base
+    seed: dict = {}
+    if os.path.exists(out_path):
+        try:
+            with open(out_path) as f:
+                seed = json.load(f)
+            logger.info("Loaded existing seed_data.json as base")
+        except Exception as e:
+            logger.warning(f"Could not parse existing seed_data.json — starting empty: {e}")
+
+    # 2) Merge Excel flat key/values on top (shallow merge at top level)
+    xlsx = _find_excel(framework_dir) if framework_dir else None
+    if xlsx:
+        logger.info(f"Merging Excel seed from: {xlsx}")
+        excel_data = _read_excel_seed(xlsx)
+        seed.update(excel_data)
+    else:
+        logger.info("No Excel found — keeping existing seed base")
+
+    # 3) Runtime values always win
+    seed["appId"] = app_id
+    if app_url:
+        seed["appUrl"] = app_url
+
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(seed, f, indent=2)

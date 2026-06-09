@@ -23,7 +23,11 @@ def resolve_env(value: str) -> str:
 
 
 def _has_real_credentials(auth: dict) -> bool:
-    """Return True only if all field values resolve to non-empty strings."""
+    """Return True only if credentials are present and non-empty for the given strategy."""
+    from auth_detect import has_auto_credentials
+    strategy = auth.get("strategy", "none")
+    if strategy == "auto":
+        return has_auto_credentials(auth)
     for value in auth.get("fields", {}).values():
         if not resolve_env(value):
             return False
@@ -117,6 +121,35 @@ async def _discover_pages_impl(
             }],
         )
         async with AsyncWebCrawler(config=browser_config) as crawler:
+            return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
+
+    # ── Auto auth — zero-config form detection
+    if strategy == "auto":
+        from auth_detect import auto_credentials, build_autofill_js
+        identity, secret = auto_credentials(auth)
+        login_url = auth.get("loginUrl", "/login")
+        if not login_url.startswith("http"):
+            login_url = app_url.rstrip("/") + login_url
+        success_indicator = auth.get("successIndicator")
+        js_code = build_autofill_js(identity, secret, success_indicator)
+        wait_for = (
+            f"css:{success_indicator}" if success_indicator
+            else "js:() => !document.querySelector('input[type=password]')"
+        )
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            from crawl4ai import CrawlerRunConfig, CacheMode
+            auth_result = await crawler.arun(
+                url=login_url,
+                config=CrawlerRunConfig(
+                    js_code=js_code,
+                    wait_for=wait_for,
+                    cache_mode=CacheMode.BYPASS,
+                ),
+            )
+            if not auth_result.success:
+                raise CrawlAuthError(f"Auto-login failed at {login_url} — check APP_USERNAME/APP_PASSWORD env vars")
+            logger.info("Auto-login successful")
+            await _notify(dashboard_url, app_id, "Auto-login successful — starting crawl")
             return await _crawl_pages(crawler, app_url, app_id, dashboard_url, blocklist, max_pages, max_depth, batch_size)
 
     # ── Form auth
