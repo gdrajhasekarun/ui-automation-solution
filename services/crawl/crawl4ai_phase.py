@@ -162,13 +162,41 @@ async def _discover_pages_impl(
     field_vals = list(fields.values())
 
     if len(field_keys) >= 2:
-        login_js = (
-            f"document.querySelector('{field_keys[0]}').value = '{resolve_env(field_vals[0])}';"
-            f"document.querySelector('{field_keys[1]}').value = '{resolve_env(field_vals[1])}';"
-            f"document.querySelector('{auth['submitSelector']}').click();"
-        )
+        val0 = resolve_env(field_vals[0]).replace("\\", "\\\\").replace("'", "\\'")
+        val1 = resolve_env(field_vals[1]).replace("\\", "\\\\").replace("'", "\\'")
+        submit_sel = auth.get("submitSelector", "input[type='submit']")
+        login_js = f"""
+(function() {{
+    // Direct value assignment — correct for JSF/Struts managed beans.
+    // Do NOT use React nativeSetter or dispatchEvent — JSF ignores browser events.
+    var identityEl = document.querySelector('{field_keys[0]}');
+    var secretEl   = document.querySelector('{field_keys[1]}');
+    if (identityEl) identityEl.value = '{val0}';
+    if (secretEl)   secretEl.value   = '{val1}';
+
+    // Try submit button first, fall back to form.submit() for JSF
+    var submitBtn = document.querySelector('{submit_sel}');
+    if (submitBtn) {{
+        submitBtn.click();
+    }} else {{
+        var form = identityEl ? identityEl.closest('form') : document.querySelector('form');
+        if (form) form.submit();
+    }}
+}})();
+"""
     else:
-        login_js = f"document.querySelector('{auth.get('submitSelector', '#submit-btn')}').click();"
+        submit_sel = auth.get("submitSelector", "input[type='submit']")
+        login_js = f"""
+(function() {{
+    var submitBtn = document.querySelector('{submit_sel}');
+    if (submitBtn) {{
+        submitBtn.click();
+    }} else {{
+        var form = document.querySelector('form');
+        if (form) form.submit();
+    }}
+}})();
+"""
 
     login_url = auth.get("loginUrl", "/login")
     if not login_url.startswith("http"):
@@ -176,18 +204,34 @@ async def _discover_pages_impl(
 
     async with AsyncWebCrawler(config=browser_config) as crawler:
         from crawl4ai import CrawlerRunConfig, CacheMode
+        success_indicator = auth.get("successIndicator", "")
+        if success_indicator:
+            wait_for = f"css:{success_indicator}"
+        else:
+            # No successIndicator — wait for password field to disappear
+            wait_for = "js:() => !document.querySelector(\"[name='j_password']\")"
+
         auth_result = await crawler.arun(
             url=login_url,
             config=CrawlerRunConfig(
                 js_code=login_js,
-                wait_for=f"css:{auth.get('successIndicator', '#dashboard')}",
+                wait_for=wait_for,
+                page_timeout=30000,   # JSF apps are slower — allow 30s
                 cache_mode=CacheMode.BYPASS,
             ),
         )
         if not auth_result.success:
             raise CrawlAuthError(f"Login failed at {login_url}")
 
-        logger.info("Crawl4AI authentication successful")
+        # Secondary check — detect silent failure (JSF bounced back to login page)
+        if auth_result.url and login_url in auth_result.url:
+            raise CrawlAuthError(
+                f"Login silently failed — still on login page after submit. "
+                f"Check APP_USERNAME and APP_PASSWORD are correct. "
+                f"Current URL: {auth_result.url}"
+            )
+
+        logger.info("Form authentication successful")
         # Seed crawl from post-login URL — not the original homepage
         post_login_url = auth_result.url or app_url
         logger.info(f"Post-login URL: {post_login_url}")

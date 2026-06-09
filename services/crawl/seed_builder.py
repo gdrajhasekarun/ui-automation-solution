@@ -7,7 +7,7 @@ try:
     from dotenv import load_dotenv
     # Walk up from this file to find the repo root .env
     _env_path = Path(__file__).parent.parent.parent / ".env"
-    load_dotenv(dotenv_path=_env_path, override=False)
+    load_dotenv(dotenv_path=_env_path, override=True)
 except ImportError:
     pass  # python-dotenv not installed — rely on env vars set by start.bat / shell
 
@@ -113,6 +113,7 @@ def build_seed(app_id: str, app_url: str, framework_dir: str, shared_dir: str) -
                 if placeholder.startswith("${") and placeholder.endswith("}"):
                     var_name = placeholder[2:-1]
                     resolved = os.environ.get(var_name, "")
+                    logger.info(f"Resolving {key}: var={var_name} found={'yes' if resolved else 'NO'}")
                     if resolved:
                         auth[key] = resolved
                     else:
@@ -136,6 +137,22 @@ def build_seed(app_id: str, app_url: str, framework_dir: str, shared_dir: str) -
     seed["appId"] = app_id
     if app_url:
         seed["appUrl"] = app_url
+
+    # 4) Resolve ${VAR} placeholders in appUrl and auth.successIndicator
+    def _resolve(val: str) -> str:
+        if val and val.startswith("${") and val.endswith("}"):
+            resolved = os.environ.get(val[2:-1], "")
+            if not resolved:
+                logger.warning(f"Env var '{val[2:-1]}' not set — placeholder kept")
+            return resolved or val
+        return val
+
+    if seed.get("appUrl"):
+        seed["appUrl"] = _resolve(seed["appUrl"])
+    auth = seed.get("auth", {})
+    if auth.get("successIndicator"):
+        auth["successIndicator"] = _resolve(auth["successIndicator"])
+        seed["auth"] = auth
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:

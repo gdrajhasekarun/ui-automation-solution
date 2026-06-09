@@ -1,16 +1,24 @@
 {
+  "appId": "client-app",
+  "appUrl": "${APP_URL}",
   "auth": {
-    "strategy": "auto",
+    "strategy": "form",
     "loginUrl": "/login",
-    "identityEnv": "${APP_USERNAME}",
-    "secretEnv": "${APP_PASSWORD}"
+    "fields": {
+      "[name='j_username']": "${APP_USERNAME}",
+      "[name='j_password']": "${APP_PASSWORD}"
+    },
+    "submitSelector": "input[type='submit']",
+    "successIndicator": "${APP_SUCCESS_INDICATOR}"
   },
   "blocklist": [
     "/logout",
     "/delete",
     "/destroy",
-    "/admin/reset"
+    "/admin/reset",
+    "/j_spring_security_logout"
   ],
-  "appId": "aetna-healthcare",
-  "appUrl": "https://www.aetna.com/"
+  "shared_element_threshold": 0.70,
+  "max_pages": 60,
+  "max_depth": 3
 }
