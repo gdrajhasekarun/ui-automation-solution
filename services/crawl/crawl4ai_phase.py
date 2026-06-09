@@ -111,7 +111,18 @@ async def _discover_pages_impl(
     strategy = auth.get("strategy", "none")
     blocklist = seed_data.get("blocklist", [])
 
-    browser_config = BrowserConfig(headless=True, verbose=False)
+    _headless = os.environ.get("CRAWL_HEADLESS", "true").strip().lower() != "false"
+    if not _headless:
+        logger.info("=" * 55)
+        logger.info("HEADED MODE — browser window will open")
+        logger.info("Watch the browser to debug login issues")
+        logger.info("Set CRAWL_HEADLESS=true to hide the browser")
+        logger.info("=" * 55)
+
+    browser_config = BrowserConfig(
+        headless=_headless,
+        verbose=not _headless,
+    )
 
     max_pages  = int(seed_data.get("max_pages", 60))
     max_depth  = int(seed_data.get("max_depth", 2))
@@ -128,8 +139,8 @@ async def _discover_pages_impl(
     if strategy == "cookie":
         cookie_cfg = auth.get("cookie", {})
         browser_config = BrowserConfig(
-            headless=True,
-            verbose=False,
+            headless=_headless,
+            verbose=not _headless,
             cookies=[{
                 "name":   cookie_cfg["name"],
                 "value":  cookie_cfg["value"],
