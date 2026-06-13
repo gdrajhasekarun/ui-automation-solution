@@ -295,17 +295,25 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
               onChange={(v: TargetTool) => setLocalTargetTool(v)}
               style={{ marginTop: 4, width: '100%', ...MONO, fontSize: 12 }}
               options={[
-                { value: 'selenium-java',    label: '☕ Selenium Java' },
-                { value: 'selenium-csharp',  label: '🔷 Selenium C#' },
-                { value: 'playwright-js',    label: '🎭 Playwright JS' },
-                { value: 'playwright-ts',    label: '🎭 Playwright TypeScript' },
+                { value: 'selenium-java',      label: '☕ Selenium Java' },
+                { value: 'selenium-csharp',    label: '🔷 Selenium C#' },
+                { value: 'selenium-python',    label: '🐍 Selenium Python' },
+                { value: 'playwright-js',      label: '🎭 Playwright JS' },
+                { value: 'playwright-ts',      label: '🎭 Playwright TypeScript' },
+                { value: 'playwright-python',  label: '🐍 Playwright Python' },
+                { value: 'cypress-js',         label: '🌲 Cypress JS' },
+                { value: 'cypress-ts',         label: '🌲 Cypress TypeScript' },
               ]}
             />
             <div style={{ ...MONO, fontSize: 10, color: C.muted, marginTop: 3 }}>
-              {targetTool === 'selenium-java'   && 'Generates Java Page Object Model classes'}
-              {targetTool === 'selenium-csharp' && 'Generates C# Page Object Model classes'}
-              {targetTool === 'playwright-js'   && 'Generates Playwright JS page classes'}
-              {targetTool === 'playwright-ts'   && 'Generates Playwright TypeScript page classes'}
+              {targetTool === 'selenium-java'     && 'Generates Java Page Object Model classes'}
+              {targetTool === 'selenium-csharp'   && 'Generates C# Page Object Model classes'}
+              {targetTool === 'selenium-python'   && 'Generates Python Page Object Model classes (Selenium)'}
+              {targetTool === 'playwright-js'     && 'Generates Playwright JS page classes'}
+              {targetTool === 'playwright-ts'     && 'Generates Playwright TypeScript page classes'}
+              {targetTool === 'playwright-python' && 'Generates Playwright Python page classes'}
+              {targetTool === 'cypress-js'        && 'Generates Cypress JS page object classes'}
+              {targetTool === 'cypress-ts'        && 'Generates Cypress TypeScript page object classes'}
             </div>
           </div>
           <div>
@@ -314,9 +322,12 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
               placeholder="./shared/java" size="small"
               style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
             <div style={{ ...MONO, fontSize: 10, color: C.muted, marginTop: 3 }}>
-              {targetTool === 'selenium-java'   && `POM files → ${frameworkDir.trim() || './framework'}/src/main/java/pages/`}
-              {targetTool === 'selenium-csharp' && `POM files → ${frameworkDir.trim() || './framework'}/src/Pages/`}
+              {targetTool === 'selenium-java'     && `POM files → ${frameworkDir.trim() || './framework'}/src/main/java/pages/`}
+              {targetTool === 'selenium-csharp'   && `POM files → ${frameworkDir.trim() || './framework'}/src/Pages/`}
+              {targetTool === 'selenium-python'   && `POM files → ${frameworkDir.trim() || './framework'}/pages/`}
               {(targetTool === 'playwright-js' || targetTool === 'playwright-ts') && `POM files → ${frameworkDir.trim() || './framework'}/src/pages/`}
+              {targetTool === 'playwright-python' && `POM files → ${frameworkDir.trim() || './framework'}/pages/`}
+              {(targetTool === 'cypress-js' || targetTool === 'cypress-ts') && `POM files → ${frameworkDir.trim() || './framework'}/cypress/pages/`}
             </div>
           </div>
           <div>
@@ -519,8 +530,12 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
   useEffect(() => { if (reduxAppId) setLocalAppId(reduxAppId) }, [reduxAppId])
 
   const fileExt = targetTool === 'selenium-csharp' ? '.cs'
+    : targetTool === 'selenium-python' ? '.py'
     : targetTool === 'playwright-js' ? '.js'
     : targetTool === 'playwright-ts' ? '.ts'
+    : targetTool === 'playwright-python' ? '.py'
+    : targetTool === 'cypress-js' ? '.js'
+    : targetTool === 'cypress-ts' ? '.ts'
     : '.java'
 
   const doFetch = React.useCallback(async (aid: string) => {

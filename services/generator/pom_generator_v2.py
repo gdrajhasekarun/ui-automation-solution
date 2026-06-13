@@ -2,10 +2,14 @@
 POM Generator v2 — multi-tool support.
 
 Supported target_tool values:
-  selenium-java    → Java classes (Selenium WebDriver)  [default]
-  selenium-csharp  → C# classes  (Selenium WebDriver)
-  playwright-js    → JavaScript classes (Playwright)
-  playwright-ts    → TypeScript classes (Playwright)
+  selenium-java      → Java classes (Selenium WebDriver)  [default]
+  selenium-csharp    → C# classes  (Selenium WebDriver)
+  selenium-python    → Python classes (Selenium WebDriver)
+  playwright-js      → JavaScript classes (Playwright)
+  playwright-ts      → TypeScript classes (Playwright)
+  playwright-python  → Python classes (Playwright)
+  cypress-js         → JavaScript classes (Cypress)
+  cypress-ts         → TypeScript classes (Cypress)
 """
 
 import json
@@ -18,6 +22,7 @@ from pom_validator import validate_all
 logger = logging.getLogger("generator.pom_gen_v2")
 
 HEADER = "// AUTO-GENERATED — DO NOT EDIT\n// Regenerate via POST /v2/trigger\n\n"
+HEADER_PY = "# AUTO-GENERATED — DO NOT EDIT\n# Regenerate via POST /v2/trigger\n\n"
 
 # ── Shared helpers (copied from pom_generator.py) ────────────────────────────
 
@@ -138,6 +143,10 @@ def output_subdir(target_tool: str) -> str:
         return os.path.join("src", "main", "java", "pages")
     if target_tool == "selenium-csharp":
         return os.path.join("src", "Pages")
+    if target_tool in ("selenium-python", "playwright-python"):
+        return "pages"
+    if target_tool in ("cypress-js", "cypress-ts"):
+        return os.path.join("cypress", "pages")
     # playwright-js / playwright-ts
     return os.path.join("src", "pages")
 
@@ -147,7 +156,9 @@ def file_extension(target_tool: str) -> str:
         return ".java"
     if target_tool == "selenium-csharp":
         return ".cs"
-    if target_tool == "playwright-js":
+    if target_tool in ("selenium-python", "playwright-python"):
+        return ".py"
+    if target_tool in ("playwright-js", "cypress-js"):
         return ".js"
     return ".ts"
 
@@ -582,13 +593,343 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
     )
 
 
+# ── Selenium Python ───────────────────────────────────────────────────────────
+
+def _py_locator(loc_type: str, loc_val: str) -> str:
+    def _py_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    if loc_type == "id":
+        return f'By.ID, "{_py_str(loc_val)}"'
+    if loc_type == "name":
+        return f'By.NAME, "{_py_str(loc_val)}"'
+    if loc_type == "xpath":
+        return f'By.XPATH, "{_py_str(loc_val)}"'
+    return f'By.CSS_SELECTOR, "{_py_str(loc_val)}"'
+
+
+def _snake(label: str, el: dict | None = None, selector_key: str = "") -> str:
+    words = _semantic_words(label, el, selector_key)
+    return "_".join(w.lower() for w in words)
+
+
+def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name: str) -> str:
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+
+    locator_lines = [
+        f'    {cname} = ({_py_locator(loc_type, loc_val)})'
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    def _unique(name: str) -> str:
+        if name not in seen_methods:
+            seen_methods[name] = 1
+            return name
+        count = seen_methods[name] + 1
+        seen_methods[name] = count
+        return f"{name}_{count}"
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
+        action = elem.get("actionType") or "click"
+
+        if sk in edge_targets:
+            target_class, is_self = edge_targets[sk]
+            ret_class = class_name if is_self else target_class
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.driver.find_element(*self.{cname}).click()\n"
+                f"        return self if {str(is_self).lower() == 'true'} else {ret_class}(self.driver)"
+            )
+        elif action == "fill":
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.driver.find_element(*self.{cname}).clear()\n"
+                f"        self.driver.find_element(*self.{cname}).send_keys(value)\n"
+                f"        return self"
+            )
+        elif action == "select":
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        from selenium.webdriver.support.ui import Select\n"
+                f"        Select(self.driver.find_element(*self.{cname})).select_by_visible_text(value)\n"
+                f"        return self"
+            )
+        else:
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.driver.find_element(*self.{cname}).click()\n"
+                f"        return self"
+            )
+
+    return (
+        HEADER_PY +
+        "from selenium.webdriver.common.by import By\n\n\n"
+        f"class {class_name}:\n"
+        + "\n".join(locator_lines) + "\n\n"
+        f"    def __init__(self, driver):\n"
+        f"        self.driver = driver\n\n"
+        + "\n\n".join(methods) + "\n"
+    )
+
+
+# ── Playwright Python ─────────────────────────────────────────────────────────
+
+def _pw_py_locator(loc_type: str, loc_val: str) -> str:
+    def _py_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    if loc_type == "id":
+        return f'"#{_py_str(loc_val)}"'
+    if loc_type == "name":
+        return f'"[name=\\"{_py_str(loc_val)}\\"]"'
+    if loc_type == "xpath":
+        return f'"xpath={_py_str(loc_val)}"'
+    return f'"{_py_str(loc_val)}"'
+
+
+def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_name: str) -> str:
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+
+    field_name = lambda cname: cname.lower().replace("_", "")
+
+    constructor_lines = [
+        f"        self.{field_name(cname)} = page.locator({_pw_py_locator(loc_type, loc_val)})"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    def _unique(name: str) -> str:
+        if name not in seen_methods:
+            seen_methods[name] = 1
+            return name
+        count = seen_methods[name] + 1
+        seen_methods[name] = count
+        return f"{name}_{count}"
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
+        action = elem.get("actionType") or "click"
+        fname = field_name(cname)
+
+        if sk in edge_targets:
+            target_class, is_self = edge_targets[sk]
+            ret_class = class_name if is_self else target_class
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.{fname}.click()\n"
+                f"        return self" if is_self else
+                f"    def {mname}(self):\n"
+                f"        self.{fname}.click()\n"
+                f"        return {ret_class}(self.page)"
+            )
+        elif action == "fill":
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.{fname}.fill(value)\n"
+                f"        return self"
+            )
+        elif action == "select":
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.{fname}.select_option(value)\n"
+                f"        return self"
+            )
+        else:
+            mname = _unique(_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.{fname}.click()\n"
+                f"        return self"
+            )
+
+    return (
+        HEADER_PY +
+        "from playwright.sync_api import Page, Locator\n\n\n"
+        f"class {class_name}:\n"
+        f"    def __init__(self, page: Page):\n"
+        f"        self.page = page\n"
+        + "\n".join(constructor_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+    )
+
+
+# ── Cypress JS ────────────────────────────────────────────────────────────────
+
+def _cy_locator(loc_type: str, loc_val: str) -> str:
+    def _js_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("'", "\\'")
+    if loc_type == "id":
+        return f"'#{_js_str(loc_val)}'"
+    if loc_type == "name":
+        return f"'[name=\"{_js_str(loc_val)}\"]'"
+    if loc_type == "xpath":
+        return f"'{_js_str(loc_val)}', {{ xpath: true }}"
+    return f"'{_js_str(loc_val)}'"
+
+
+def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str) -> str:
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+
+    getter_lines = [
+        f"    get {cname.lower()}() {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    def _unique(name: str) -> str:
+        if name not in seen_methods:
+            seen_methods[name] = 1
+            return name
+        count = seen_methods[name] + 1
+        seen_methods[name] = count
+        return f"{name}{count}"
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
+        action = elem.get("actionType") or "click"
+        getter = cname.lower()
+
+        if sk in edge_targets:
+            target_class, _ = edge_targets[sk]
+            mname = _unique(_method_name("click", label, sk, elem))
+            methods.append(
+                f"    {mname}() {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return new {target_class}();\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _unique(_method_name("enter", label, sk, elem))
+            methods.append(
+                f"    {mname}(value) {{\n"
+                f"        this.{getter}.clear().type(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _unique(_method_name("select", label, sk, elem))
+            methods.append(
+                f"    {mname}(value) {{\n"
+                f"        this.{getter}.select(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _unique(_method_name("click", label, sk, elem))
+            methods.append(
+                f"    {mname}() {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    return (
+        HEADER +
+        f"class {class_name} {{\n"
+        + "\n".join(getter_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n\n"
+        f"module.exports = {{ {class_name} }};\n"
+    )
+
+
+# ── Cypress TypeScript ────────────────────────────────────────────────────────
+
+def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str) -> str:
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+
+    getter_lines = [
+        f"    get {cname.lower()}(): Cypress.Chainable {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    def _unique(name: str) -> str:
+        if name not in seen_methods:
+            seen_methods[name] = 1
+            return name
+        count = seen_methods[name] + 1
+        seen_methods[name] = count
+        return f"{name}{count}"
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
+        action = elem.get("actionType") or "click"
+        getter = cname.lower()
+
+        if sk in edge_targets:
+            target_class, _ = edge_targets[sk]
+            mname = _unique(_method_name("click", label, sk, elem))
+            methods.append(
+                f"    {mname}(): {target_class} {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return new {target_class}();\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _unique(_method_name("enter", label, sk, elem))
+            methods.append(
+                f"    {mname}(value: string): this {{\n"
+                f"        this.{getter}.clear().type(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _unique(_method_name("select", label, sk, elem))
+            methods.append(
+                f"    {mname}(value: string): this {{\n"
+                f"        this.{getter}.select(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _unique(_method_name("click", label, sk, elem))
+            methods.append(
+                f"    {mname}(): this {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    return (
+        HEADER +
+        f"export class {class_name} {{\n"
+        + "\n".join(getter_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n"
+    )
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 _GENERATORS = {
-    "selenium-java":   (_generate_java,          ".java"),
-    "selenium-csharp": (_generate_csharp,        ".cs"),
-    "playwright-js":   (_generate_playwright_js,  ".js"),
-    "playwright-ts":   (_generate_playwright_ts,  ".ts"),
+    "selenium-java":     (_generate_java,             ".java"),
+    "selenium-csharp":   (_generate_csharp,           ".cs"),
+    "selenium-python":   (_generate_selenium_python,  ".py"),
+    "playwright-js":     (_generate_playwright_js,    ".js"),
+    "playwright-ts":     (_generate_playwright_ts,    ".ts"),
+    "playwright-python": (_generate_playwright_python, ".py"),
+    "cypress-js":        (_generate_cypress_js,       ".js"),
+    "cypress-ts":        (_generate_cypress_ts,       ".ts"),
 }
 
 

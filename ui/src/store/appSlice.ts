@@ -1,6 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 
-export type TargetTool = 'selenium-java' | 'selenium-csharp' | 'playwright-js' | 'playwright-ts'
+export type TargetTool = 'selenium-java' | 'selenium-csharp' | 'playwright-js' | 'playwright-ts' | 'playwright-python' | 'selenium-python' | 'cypress-js' | 'cypress-ts' | 'playwright-python' | 'selenium-python' | 'cypress-js' | 'cypress-ts'
 
 interface AppState {
   appId:        string
@@ -18,7 +18,7 @@ if (storedFrameworkDir && _staleFrameworkDirs.has(storedFrameworkDir)) {
   localStorage.removeItem('frameworkDir')
 }
 
-const _validTools = new Set<string>(['selenium-java', 'selenium-csharp', 'playwright-js', 'playwright-ts'])
+const _validTools = new Set<string>(['selenium-java', 'selenium-csharp', 'playwright-js', 'playwright-ts', 'playwright-python', 'selenium-python', 'cypress-js', 'cypress-ts'])
 const _storedTool = localStorage.getItem('targetTool') ?? ''
 
 const initial: AppState = {

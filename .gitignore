@@ -28,6 +28,7 @@ shared/java/src/test/resources/testdata.xlsx
 shared/outputs/
 */src/main/java/pages/
 */target/
+**/pom_registry.json
 
 # macOS
 .DS_Store
