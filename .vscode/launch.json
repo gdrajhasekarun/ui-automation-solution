@@ -34,6 +34,23 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Crawl ai :8001",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8001", "--reload"],
+      "cwd": "${workspaceFolder}/services/crawl_ai",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000",
+        "GENERATOR_URL": "http://localhost:8002"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Generator :8002",
       "type": "debugpy",
       "request": "launch",
@@ -82,6 +99,59 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "App Graph Crawler :8005",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "src/server.ts"],
+      "cwd": "${workspaceFolder}/services/app-graph-crawler",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PORT": "8005",
+        "DASHBOARD_URL": "http://localhost:8000",
+        "GENERATOR_URL": "http://localhost:8002"
+      },
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "crawl - ai :8006",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/services/crawl-ai/node_modules/.bin/tsx",
+      "args": ["src/server.ts"],
+      "cwd": "${workspaceFolder}/services/crawl-ai",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "CRAWL_AI_PORT": "8006",
+        "DASHBOARD_URL": "http://localhost:8000",
+        "GENERATOR_URL": "http://localhost:8002",
+        "NODE_OPTIONS": ""
+      },
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      "name": "flow-crawler :8006",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/services/flow-crawler/node_modules/.bin/tsx",
+      "args": ["src/index.ts"],
+      "cwd": "${workspaceFolder}/services/flow-crawler",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "FLOW_CRAWLER_PORT": "8006",
+        "DASHBOARD_URL": "http://localhost:8000",
+        "GENERATOR_URL": "http://localhost:8002",
+        "NODE_OPTIONS": ""
+      },
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
       "name": "All Services",
       "type": "debugpy",
       "request": "launch",
@@ -103,10 +173,13 @@
       "name": "All Services (compound)",
       "configurations": [
         "Dashboard :8000",
-        "Crawl :8001",
+        // "Crawl ai :8001",
         "Generator :8002",
-        "Planner :8003",
-        "Executor :8004"
+        // "App Graph Crawler :8005",
+        "crawl - ai :8006"
+
+        // "Planner :8003",
+        // "Executor :8004"
       ],
       "stopAll": true
     }

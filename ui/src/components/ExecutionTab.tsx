@@ -121,7 +121,7 @@ export default function ExecutionTab() {
   const [liveLog, setLiveLog]             = useState<string[]>([])
 
   // Queries
-  const { data: tcs = [] } = useGetTestCasesQuery(appId, { pollingInterval: 5000, skip: !appId })
+  const { data: tcs = [] } = useGetTestCasesQuery(appId, { pollingInterval: view === 'running' ? 5000 : 0, skip: !appId })
   const { data: runs = [] } = useGetRunsQuery(appId, { skip: !drawerOpen || !appId })
   const { data: execEvents = [] } = useGetEventsQuery({ appId, limit: 100 }, {
     pollingInterval: view === 'running' ? 1000 : 0,

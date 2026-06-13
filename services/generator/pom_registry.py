@@ -22,32 +22,47 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
     with open(graph_path) as f:
         graph = json.load(f)
 
-    node_map = {n["nodeId"]: n for n in graph.get("nodes", [])}
+    # nodes is a dict keyed by node_id in crawl-ai format
+    nodes_dict = graph.get("nodes", {})
+    node_map = dict(nodes_dict)  # node_id -> node_data
+
     edges_by_from = {}
     for e in graph.get("edges", []):
-        edges_by_from.setdefault(e["fromNodeId"], []).append(e)
+        # crawl-ai uses "from"/"to"; legacy format uses "fromNodeId"/"toNodeId"
+        from_id = e.get("from") or e.get("fromNodeId", "")
+        edges_by_from.setdefault(from_id, []).append(e)
 
     registry = []
-    for node in graph.get("nodes", []):
-        title = node.get("title", "Page")
-        class_name = _pascal(title) + "Page"
-        node_id = node["nodeId"]
+    for node_id, node in nodes_dict.items():
+        page_ref = (node.get("pageRef") or "").strip()
+        if page_ref and page_ref.lower() not in {"", "page", "error page", "untitled"}:
+            raw = _pascal(page_ref)
+            class_name = raw if raw.endswith("Page") else raw + "Page"
+        else:
+            label = (node.get("nodeName") or node.get("heading") or node.get("title") or "Page").strip()
+            class_name = _pascal(label) + "Page"
         my_edges = edges_by_from.get(node_id, [])
-        edge_sk = {e["selectorKey"]: e for e in my_edges}
+        # crawl-ai edges use trigger.elementName as selector key fallback
+        edge_sk = {
+            (e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label", "")): e
+            for e in my_edges
+            if (e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label"))
+        }
 
         seen = set()
         for elem in node.get("elements", []):
-            sk = elem.get("selectorKey", "")
+            sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
             if not sk or sk in seen:
                 continue
             seen.add(sk)
-            label = elem.get("name", sk)
-            action = elem.get("actionType", "click")
+            label = elem.get("label") or elem.get("name") or sk
+            action = elem.get("actionType") or elem.get("elementType") or "click"
 
             is_nav = sk in edge_sk
             navigates_to = ""
             if is_nav:
-                to_node = node_map.get(edge_sk[sk]["toNodeId"])
+                to_nid = edge_sk[sk].get("to") or edge_sk[sk].get("toNodeId", "")
+                to_node = node_map.get(to_nid)
                 if to_node:
                     navigates_to = _pascal(to_node.get("title", "")) + "Page"
 

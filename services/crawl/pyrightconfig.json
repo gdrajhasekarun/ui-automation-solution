@@ -1,6 +1,0 @@
-{
-  "pythonPath": "../../.venv/bin/python",
-  "extraPaths": [".", "services/crawl"],
-  "venvPath": "../..",
-  "venv": ".venv"
-}

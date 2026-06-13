@@ -136,19 +136,24 @@ def _parse_locator(selector_key: str) -> tuple[str, str]:
     return "css", sk
 
 
-def _generate_class(node: dict, graph: dict, class_name: str) -> str:
-    node_id = node["nodeId"]
+def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> str:
+    # Build node_id → class_name map from the dict-keyed nodes
+    node_class_map: dict[str, str] = {
+        nid: _class_name_from_node(n)
+        for nid, n in graph.get("nodes", {}).items()
+    }
 
-    node_class_map: dict[str, str] = {}
-    for n in graph.get("nodes", []):
-        node_class_map[n["nodeId"]] = _class_name_from_node(n)
-
-    edges_from = [e for e in graph.get("edges", []) if e["fromNodeId"] == node_id]
+    # crawl-ai edges use "from"/"to" (not "fromNodeId"/"toNodeId")
+    edges_from = [e for e in graph.get("edges", []) if e.get("from") == node_id]
     edge_targets: dict[str, tuple[str, bool]] = {}
     for e in edges_from:
-        to_nid = e["toNodeId"]
+        # crawl-ai stores trigger element name; use as selector key fallback
+        sk = e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label") or ""
+        if not sk:
+            continue
+        to_nid = e.get("to", "")
         target_class = node_class_map.get(to_nid, "UnknownPage")
-        edge_targets[e["selectorKey"]] = (target_class, to_nid == node_id)
+        edge_targets[sk] = (target_class, to_nid == node_id)
 
     elements = node.get("elements", [])
     assertable = node.get("assertableElements", [])
@@ -157,7 +162,7 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
     seen_sk: set[str] = set()
     unique_elements: list[dict] = []
     for elem in elements:
-        sk = elem.get("selectorKey", "")
+        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
         if sk and sk not in seen_sk:
             seen_sk.add(sk)
             unique_elements.append(elem)
@@ -167,14 +172,16 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
     seen_const: set[str] = set()
     elem_consts: list[tuple[str, str, str, dict]] = []  # (const_name, loc_type, loc_val, elem)
     for elem in unique_elements:
-        sk = elem.get("selectorKey") or ""
-        label = (elem.get("name") or "").strip()
+        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
         loc_type, loc_val = _parse_locator(sk)
         cname = _const_name(label, el=elem, selector_key=sk)
-        # Resolve collision by appending a disambiguator from the selector
+        # Resolve collision by appending an incrementing counter
         if cname in seen_const:
-            disambig = re.sub(r"[^A-Z0-9]", "", _const_name(sk, selector_key=sk))
-            cname = (cname + "_" + disambig) if disambig else cname + "_2"
+            base, counter = cname, 2
+            while f"{base}_{counter}" in seen_const:
+                counter += 1
+            cname = f"{base}_{counter}"
         seen_const.add(cname)
         elem_consts.append((cname, loc_type, loc_val, elem))
 
@@ -192,7 +199,8 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
     # ── Constructor asserts ──────────────────────────────────────────────────
     assert_consts = []
     for cname, _, _, elem in elem_consts:
-        if elem.get("selectorKey") in assertable:
+        elem_sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
+        if elem_sk in assertable:
             assert_consts.append(cname)
     constructor_asserts = "\n".join(
         f"        assertVisible({c});" for c in assert_consts[:3]
@@ -211,9 +219,9 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
         return f"{base_name}{count}"
 
     for cname, _, _, elem in elem_consts:
-        sk = elem.get("selectorKey") or ""
-        label = (elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
+        label = (elem.get("label") or elem.get("name") or "").strip()
+        action = elem.get("actionType") or elem.get("elementType") or "click"
 
         if sk in edge_targets:
             target_class, is_self = edge_targets[sk]
@@ -226,7 +234,7 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
                 f"        return {ret_expr};\n"
                 f"    }}"
             )
-        elif action == "fill":
+        elif action in ("fill", "input"):
             mname = _unique_method(_method_name("enter", label, sk, elem))
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
@@ -271,10 +279,35 @@ def _generate_class(node: dict, graph: dict, class_name: str) -> str:
 _SKIP_TITLES = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
 
 
+_MAX_CLASS_NAME = 80  # keeps file names well under the 255-byte OS limit
+
+
+def _safe_class_name(name: str) -> str:
+    """Truncate a PascalCase class name so it (+ '.java') fits within OS file-name limits."""
+    if not name.endswith("Page"):
+        name = name + "Page"
+    if len(name) > _MAX_CLASS_NAME:
+        # Trim the base part and re-attach the 'Page' suffix
+        name = name[:_MAX_CLASS_NAME - 4] + "Page"
+    return name
+
+
 def _class_name_from_node(node: dict) -> str:
+    # pageRef is the crawler-assigned semantic name — use it first
+    page_ref = (node.get("pageRef") or "").strip()
+    if page_ref and page_ref.lower() not in _SKIP_TITLES:
+        return _safe_class_name(_pascal(page_ref))
+    # nodeName is pre-derived by the crawler (heading > stripped title > url path)
+    node_name = (node.get("nodeName") or "").strip()
+    if node_name and node_name.lower() not in _SKIP_TITLES and len(node_name) <= 80:
+        return _safe_class_name(_pascal(node_name))
+    # Fallbacks for older graph files without nodeName
+    heading = (node.get("heading") or "").strip()
+    if heading and heading.lower() not in _SKIP_TITLES and len(heading) <= 80:
+        return _safe_class_name(_pascal(heading))
     title = (node.get("title") or "").strip()
-    if title.lower() not in _SKIP_TITLES:
-        return _pascal(title) + "Page"
+    if title and title.lower() not in _SKIP_TITLES:
+        return _safe_class_name(_pascal(title))
     from urllib.parse import urlparse
     url = node.get("url", "")
     parsed = urlparse(url)
@@ -282,7 +315,7 @@ def _class_name_from_node(node: dict) -> str:
     parts = [p.rsplit(".", 1)[0] for p in parsed.path.strip("/").split("/")
              if p and p.lower() not in ignore]
     label = " ".join(parts[-2:]) if parts else (parsed.hostname or "Unknown").split(".")[0]
-    return _pascal(label) + "Page" if label else "UnknownPage"
+    return _safe_class_name(_pascal(label)) if label else "UnknownPage"
 
 
 def generate_all(graph_path: str, output_dir: str) -> dict:
@@ -293,7 +326,8 @@ def generate_all(graph_path: str, output_dir: str) -> dict:
     written = []
     seen_classes: set[str] = set()
 
-    for node in graph.get("nodes", []):
+    # nodes is a dict: { node_id: node_data } — iterate .items() to get both
+    for node_id, node in graph.get("nodes", {}).items():
         elements = node.get("elements", [])
         if not elements:
             logger.info(f"Skipping {node.get('url', '?')} — no interactable elements")
@@ -301,21 +335,24 @@ def generate_all(graph_path: str, output_dir: str) -> dict:
 
         class_name = _class_name_from_node(node)
         if class_name in seen_classes:
-            suffix = node["nodeId"][-4:]
-            class_name = class_name[:-4] + suffix.capitalize() + "Page"
+            base = class_name[:-4]  # strip "Page"
+            counter = 2
+            while f"{base}{counter}Page" in seen_classes:
+                counter += 1
+            class_name = f"{base}{counter}Page"
         seen_classes.add(class_name)
 
-        content = _generate_class(node, graph, class_name)
+        content = _generate_class(node, node_id, graph, class_name)
         file_path = os.path.join(output_dir, f"{class_name}.java")
         with open(file_path, "w") as f:
             f.write(content)
-        written.append({"class": class_name, "path": file_path, "node_id": node["nodeId"]})
+        written.append({"class": class_name, "path": file_path, "node_id": node_id})
         logger.info(f"Generated {class_name}.java — {len(elements)} elements")
 
     # Patch className into each graph node so the dashboard can display it
     node_to_class = {w["node_id"]: w["class"] for w in written}
-    for node in graph.get("nodes", []):
-        node["className"] = node_to_class.get(node["nodeId"], "")
+    for node_id, node in graph.get("nodes", {}).items():
+        node["className"] = node_to_class.get(node_id, "")
     with open(graph_path, "w") as f:
         json.dump(graph, f, indent=2)
 

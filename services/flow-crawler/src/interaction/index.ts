@@ -1,0 +1,6 @@
+export { dispatch } from './elementInteractor.js'
+export type { InteractResult } from './elementInteractor.js'
+export { getLibInteractor } from './lib/index.js'
+export type { LibFieldInteractor, LibInteractorMap } from './lib/index.js'
+export { safeClick } from './safeClick.js'
+export { waitForIdle } from './waitForIdle.js'

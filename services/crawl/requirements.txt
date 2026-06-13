@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-crawl4ai
-playwright
-httpx
-python-dotenv

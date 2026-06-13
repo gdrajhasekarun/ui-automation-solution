@@ -1,0 +1,13 @@
+{
+  "outputDir": "../../shared/outputs",
+  "excelFile": "./crawl-data.xlsx",
+  "cacheFile": "./crawl_data.json",
+  "llm": {
+    "enabled": true,
+    "smartProvider": "openai",
+    "smartModel": "gpt-4o",
+    "fastProvider": "openai",
+    "fastModel": "gpt-4o-mini",
+    "confidenceThreshold": 0.7
+  }
+}

@@ -1,0 +1,4 @@
+node_modules/
+dist/
+crawl_data.json
+*.log

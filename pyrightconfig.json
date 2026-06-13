@@ -22,6 +22,10 @@
     {
       "root": "services/executor",
       "extraPaths": ["services/executor"]
+    },
+    {
+      "root": "services/crawl_ai",
+      "extraPaths": ["services/crawl_ai"]
     }
   ]
 }

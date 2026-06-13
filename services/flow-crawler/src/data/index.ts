@@ -1,0 +1,5 @@
+export { readExcel }      from './excelReader.js'
+export type { ExcelData, CredentialRow, FormFillRow } from './excelReader.js'
+export { resolveValue }   from './formFiller.js'
+export type { FillResult } from './formFiller.js'
+export { resolveOutputDir } from './crawlAiConfig.js'
