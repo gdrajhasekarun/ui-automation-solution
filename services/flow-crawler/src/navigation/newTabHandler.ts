@@ -41,13 +41,17 @@ export async function captureNewTab(
     const title    = await newPage.title()
     const fp       = pageFingerprint(elements.map(e => e.id))
 
-    const pageRef = llm
-      ? await namePageRef(title, url, elements, llm, {}, graph.usedPageRefNames)
-          .then(r => { graph.incrementLLMCalls(); return graph.registerPageRef(r) })
-      : graph.registerPageRef(title)
+    let pageRef = graph.registerPageRef(title)
+    let description: string | undefined
+    if (llm) {
+      const meta = await namePageRef(title, url, elements, llm, {}, graph.usedPageRefNames)
+      graph.incrementLLMCalls()
+      pageRef = graph.registerPageRef(meta.pageRef)
+      description = meta.description || undefined
+    }
 
     graph.addNode(id, {
-      url, normalizedUrl: normUrl, title, pageRef,
+      url, normalizedUrl: normUrl, title, pageRef, description,
       fingerprint: fp, uiLibrary: library,
       elements, unfilledFields: [],
     })

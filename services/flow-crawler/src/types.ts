@@ -133,6 +133,7 @@ export const NodeSchema = z.object({
   normalizedUrl:  z.string(),
   title:          z.string(),
   pageRef:        z.string().optional(),
+  description:    z.string().optional(),
   fingerprint:    z.string(),
   uiLibrary:      UILibrarySchema,
   elements:       z.array(CapturedElementSchema),

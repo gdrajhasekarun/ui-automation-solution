@@ -295,12 +295,15 @@ def _normalize_v3_graph(raw: dict) -> dict:
             new_els = []
             for el in node.get("elements", []):
                 new_els.append({
-                    "role":        el.get("role", "") or el.get("tag", ""),
-                    "name":        el.get("label") or el.get("inferredName") or el.get("name") or "",
-                    "selectorKey": _selector_from_element(el),
-                    "actionType":  el.get("actionType") or _infer_action_type(el),
-                    "tag":         el.get("tag", ""),
-                    "inputType":   el.get("inputType") or el.get("type") or "",
+                    "role":          el.get("role", "") or el.get("tag", ""),
+                    "name":          el.get("label") or el.get("inferredName") or el.get("name") or "",
+                    "selectorKey":   _selector_from_element(el),
+                    "actionType":    el.get("actionType") or _infer_action_type(el),
+                    "tag":           el.get("tag", ""),
+                    "inputType":     el.get("inputType") or el.get("type") or "",
+                    "placeholder":   el.get("placeholder") or "",
+                    "resolvedValue": el.get("_resolvedValue") or "",
+                    "href":          el.get("href") or "",
                 })
             unf = node.get("unfilledFields", [])
             ref = _page_ref_name(node)
@@ -309,7 +312,9 @@ def _normalize_v3_graph(raw: dict) -> dict:
                 "url":          node.get("url", ""),
                 "title":        node.get("title", ""),
                 "className":    node.get("className", ""),
-                "pageRef":  ref,
+                "pageRef":      ref,
+                "description":  node.get("description") or "",
+                "uiLibrary":    node.get("uiLibrary") or "",
                 "elements":     new_els,
                 "assertableElements": [_selector_from_element({"_selector": f.get("fieldId", "")}) for f in unf],
             })

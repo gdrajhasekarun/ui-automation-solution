@@ -32,6 +32,7 @@ function classifyElementType(tag: string, role: string, inputType: string): Capt
   if (r === 'button')     return 'button'
   if (r === 'link')       return 'link'
   if (r === 'tab')        return 'tab'
+  if (r === 'option')     return 'combobox'   // autocomplete suggestion — treat as a fill, not navigation
   if (r === 'combobox' || r === 'listbox') return 'combobox'
   if (r === 'switch' || r === 'togglebutton') return 'toggle'
   if (r === 'textbox')    return 'textbox'
@@ -107,7 +108,11 @@ export async function capturePageElements(
         if (href && href !== '#' && !href.startsWith('javascript'))
                          return `a[href="${href.slice(0, 100).replace(/"/g, '\\"')}"]`
         if (placeholder) return `${tag}[placeholder="${placeholder.slice(0, 80).replace(/"/g, '\\"')}"]`
-        return `${tag}:has-text("${(el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50).replace(/"/g, '\\"')}")`
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50).replace(/"/g, '\\"')
+        // For autocomplete/dropdown options use role selector — more specific than tag:has-text
+        const role = (el.getAttribute('role') || '').toLowerCase()
+        if (role === 'option') return `[role="option"]:has-text("${text}")`
+        return `${tag}:has-text("${text}")`
       },
 
       isVisible(el: HTMLElement): boolean {

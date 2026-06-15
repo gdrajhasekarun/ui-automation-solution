@@ -50,12 +50,13 @@ export async function runFromPage(
   if (isBlocked(url)) return
 
   const library  = await detectUILibrary(page)
-  let elements = await capturePageElements(page, library)
+  const allElements = await capturePageElements(page, library)  // full set — always stored in graph
+  let elements = allElements                                     // may be narrowed by LLM filter for interaction
   const title = await page.title()
 
   // When the same URL appears with different content (wizard steps), use element fingerprint
   // to create distinct node IDs so each step is captured separately in the graph.
-  const fp  = pageFingerprint(elements.map(e => e.id))
+  const fp  = pageFingerprint(allElements.map(e => e.id))
   const baseId = nodeId(normUrl)
   const id  = graph.hasNode(baseId) && graph.getNode(baseId)?.fingerprint !== fp
     ? nodeId(normUrl + '#' + fp.slice(0, 8))
@@ -64,23 +65,35 @@ export async function runFromPage(
   log.step('CAPTURE', `[depth:${ctx.depth}] "${title || normUrl}"  library:${library}  elements:${elements.length}  node:${id}`)
 
   // Log all captured elements (mirrors crawl-ai FLOW_TRACE format)
-  elements.forEach((e, i) => {
+  allElements.forEach((e, i) => {
     log.info('CAPTURE', `  [${String(i + 1).padStart(3)}] tag=${e.tag.padEnd(8)} type=${e.elementType.padEnd(8)} label="${e.name}"  selector=${e._selector}`)
   })
 
-  // Register node if new, always update elements so they're captured in the graph
+  // Register node if new — always store the FULL element set in the graph
   if (!graph.hasNode(id)) {
-    const pageRef = ctx.smartLLM
-      ? await namePageRef(title, url, elements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-          .then(r => { graph.incrementLLMCalls(); return graph.registerPageRef(r) })
-      : graph.registerPageRef(title)
+    let pageRef = graph.registerPageRef(title)
+    let description: string | undefined
+    if (ctx.smartLLM) {
+      const meta = await namePageRef(title, url, allElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
+      graph.incrementLLMCalls()
+      pageRef = graph.registerPageRef(meta.pageRef)
+      description = meta.description || undefined
+    }
     graph.addNode(id, {
-      url, normalizedUrl: normUrl, title, pageRef,
+      url, normalizedUrl: normUrl, title, pageRef, description,
       fingerprint: fp, uiLibrary: library,
-      elements, unfilledFields: [],
+      elements: allElements, unfilledFields: [],
     })
   } else {
-    graph.updateNode(id, { elements })
+    const existingNode = graph.getNode(id)
+    if (ctx.smartLLM && existingNode && !existingNode.description) {
+      // Backfill description for nodes that were created without one
+      const meta = await namePageRef(title, url, allElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
+      graph.incrementLLMCalls()
+      graph.updateNode(id, { elements: allElements, description: meta.description || undefined })
+    } else {
+      graph.updateNode(id, { elements: allElements })
+    }
   }
 
   // ── LLM element filter (Phase A only) ──────────────────────────────────────
@@ -125,12 +138,12 @@ export async function runFromPage(
 
         const fillResult = await resolveValue(
           element, ctx.excelData, ctx.notes, ctx.cache,
-          ctx.smartLLM, config, normUrl
+          ctx.smartLLM, config, normUrl, undefined, config.flowName
         )
 
         let valueToFill = fillResult.value
 
-        // Combobox/select fallback: if no resolved value, pick first available option
+        // Combobox/select fallback: if no resolved value, pick best matching option
         if (!valueToFill && (element.elementType === 'combobox' || element.elementType === 'select')) {
           const firstOption = await page.evaluate((sel) => {
             // Native <select>
@@ -139,23 +152,49 @@ export async function runFromPage(
               const opt = Array.from(select.options).find(o => o.value && o.value !== '')
               return opt?.text?.trim() ?? null
             }
-            // mat-select / custom combobox: open it and read mat-option text
             return null
           }, element._selector).catch(() => null)
 
           if (firstOption) {
             valueToFill = firstOption
-            fillResult.source = 'cache'  // treat as auto-selected, no LLM cost
+            fillResult.source = 'cache'
             log.info('INTERACT', `  → auto-select "${element.name}"  first option="${firstOption}"`)
           } else {
-            // For Angular Material mat-select: click to open then pick first mat-option
+            // For Angular Material mat-select / autocomplete: pick option that best matches flowName,
+            // falling back to first option only if no keyword match found
             try {
               await safeClick(page, element._selector)
               await page.waitForTimeout(500)
-              const matOption = await page.locator('mat-option').first().textContent({ timeout: 2000 }).catch(() => null)
-              if (matOption?.trim()) {
-                valueToFill = matOption.trim()
-                await page.locator('mat-option').first().click()
+
+              // Build keyword list from flowName for scoring
+              const flowKeywords = (config.flowName ?? '')
+                .toLowerCase()
+                .replace(/[^a-z0-9\s]/g, '')
+                .split(/\s+/)
+                .filter(w => w.length > 3)
+
+              const picked = await page.evaluate((keywords) => {
+                const options = Array.from(document.querySelectorAll('mat-option, [role="option"]'))
+                if (!options.length) return null
+                // Score each option by how many flow keywords appear in its text
+                let best: { el: Element; score: number } | null = null
+                for (const opt of options) {
+                  const text = (opt.textContent ?? '').toLowerCase()
+                  const score = keywords.reduce((n: number, kw: string) => n + (text.includes(kw) ? 1 : 0), 0)
+                  if (!best || score > best.score) best = { el: opt, score }
+                }
+                if (best && best.score > 0) {
+                  (best.el as HTMLElement).click()
+                  return (best.el.textContent ?? '').replace(/\s+/g, ' ').trim()
+                }
+                // No keyword match — fall back to first option
+                const first = options[0] as HTMLElement
+                first.click()
+                return (first.textContent ?? '').replace(/\s+/g, ' ').trim()
+              }, flowKeywords).catch(() => null)
+
+              if (picked?.trim()) {
+                valueToFill = picked.trim()
                 await page.waitForTimeout(300)
                 log.info('INTERACT', `  → mat-select  "${element.name}"  picked="${valueToFill}"`)
                 element._resolvedValue = valueToFill
@@ -276,12 +315,17 @@ export async function runFromPage(
         const stepTitle   = await page.title()
         const stepNodeId  = nodeId(normalizeUrl(stepPageUrl) + '#' + stepFp.slice(0, 8))
         if (!graph.hasNode(stepNodeId)) {
-          const stepPageRef = ctx.smartLLM
-            ? await namePageRef(stepTitle, stepPageUrl, currentElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-                .then(r => { graph.incrementLLMCalls(); return graph.registerPageRef(r) })
-            : graph.registerPageRef(stepTitle)
+          let stepPageRef = graph.registerPageRef(stepTitle)
+          let stepDescription: string | undefined
+          if (ctx.smartLLM) {
+            const meta = await namePageRef(stepTitle, stepPageUrl, currentElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
+            graph.incrementLLMCalls()
+            stepPageRef = graph.registerPageRef(meta.pageRef)
+            stepDescription = meta.description || undefined
+          }
           graph.addNode(stepNodeId, {
-            url: stepPageUrl, normalizedUrl: normalizeUrl(stepPageUrl), title: stepTitle, pageRef: stepPageRef,
+            url: stepPageUrl, normalizedUrl: normalizeUrl(stepPageUrl), title: stepTitle,
+            pageRef: stepPageRef, description: stepDescription,
             fingerprint: stepFp, uiLibrary: library,
             elements: currentElements, unfilledFields: [],
           })
@@ -412,8 +456,8 @@ export async function runFromPage(
 
   await cleanupCrawlerAttrs(page)
 
-  // Update node with final element state
-  graph.updateNode(id, { elements })
+  // Update node with full element set (not the LLM-filtered subset)
+  graph.updateNode(id, { elements: allElements })
 }
 
 export async function runCrawlLoop(

@@ -3,14 +3,16 @@ import type { CapturedElement } from '../types.js'
 import { safeClick } from './safeClick.js'
 
 export interface LinkResult {
-  navigated:   boolean
-  toUrl:       string | null
-  opensNewTab: boolean
-  newTab:      Page | null
+  navigated:      boolean
+  toUrl:          string | null
+  opensNewTab:    boolean
+  newTab:         Page | null
+  contentChanged: boolean
 }
 
 export async function follow(page: Page, element: CapturedElement): Promise<LinkResult> {
-  if (!element._selector) return { navigated: false, toUrl: null, opensNewTab: false, newTab: null }
+  const none = { navigated: false, toUrl: null, opensNewTab: false, newTab: null, contentChanged: false }
+  if (!element._selector) return none
 
   const opensNewTab = await page.evaluate((sel) => {
     const el = document.querySelector(sel) as HTMLAnchorElement | null
@@ -18,26 +20,37 @@ export async function follow(page: Page, element: CapturedElement): Promise<Link
   }, element._selector).catch(() => false)
 
   if (opensNewTab) {
-    // Actually click and capture the new tab instead of returning early with null
     try {
       const [newPage] = await Promise.all([
         page.context().waitForEvent('page', { timeout: 5000 }),
         safeClick(page, element._selector),
       ])
       await newPage.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {})
-      return { navigated: false, toUrl: newPage.url(), opensNewTab: true, newTab: newPage }
+      return { navigated: false, toUrl: newPage.url(), opensNewTab: true, newTab: newPage, contentChanged: false }
     } catch {
-      // Click fired but no new tab appeared — fall through to same-tab navigation
+      // fall through to same-tab navigation
     }
   }
 
   const beforeUrl = page.url()
+  // Snapshot DOM state before click to detect content changes (e.g. autocomplete option selection)
+  const beforeDom = await page.evaluate(() => document.body.innerHTML.length).catch(() => 0)
+
   try {
     await safeClick(page, element._selector)
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
-    const after = page.url()
-    return { navigated: after !== beforeUrl, toUrl: after, opensNewTab: false, newTab: null }
+    const afterUrl = page.url()
+
+    if (afterUrl !== beforeUrl) {
+      return { navigated: true, toUrl: afterUrl, opensNewTab: false, newTab: null, contentChanged: false }
+    }
+
+    // Same URL — check if DOM changed (autocomplete selection, modal open, etc.)
+    const afterDom = await page.evaluate(() => document.body.innerHTML.length).catch(() => 0)
+    const contentChanged = Math.abs(afterDom - beforeDom) > 50
+
+    return { navigated: false, toUrl: afterUrl, opensNewTab: false, newTab: null, contentChanged }
   } catch {
-    return { navigated: false, toUrl: null, opensNewTab: false, newTab: null }
+    return none
   }
 }

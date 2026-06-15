@@ -22,9 +22,15 @@ export async function resolveValue(
   config: CrawlerConfig,
   normalizedUrl: string,
   accountId?: string,
+  flowName?: string,
 ): Promise<FillResult> {
   const type = element.elementType
   if (type !== 'textbox' && type !== 'textarea' && type !== 'select' && type !== 'combobox') return noFill()
+
+  // If the element itself is a dropdown option (role="option"), its name IS the value — click directly
+  if (element._selector && element._selector.includes('[role="option"]')) {
+    return { value: element.name, key: element.name, source: 'static', confidence: 1.0 }
+  }
 
   const elementName = element.name.toLowerCase().replace(/\s+/g, '_')
 
@@ -60,15 +66,9 @@ export async function resolveValue(
     return { value: cached.value, key: cached.key, source: 'cache', confidence: cached.confidence }
   }
 
-  // Level 4: Static fallback by input type
-  const staticValue = staticFallback(element)
-  if (staticValue !== null) {
-    return { value: staticValue, key: cacheKey, source: 'static', confidence: 0.6 }
-  }
-
-  // Level 5: LLM
+  // Level 4: LLM
   if (llm) {
-    const reasoning = await reasonFields([element], notes, llm, config.llm.confidenceThreshold)
+    const reasoning = await reasonFields([element], notes, llm, config.llm.confidenceThreshold, flowName)
     const field = reasoning.fields[0]
     if (field && field.value && field.confidence >= config.llm.confidenceThreshold) {
       const llmKey = field.key
@@ -91,19 +91,6 @@ function elementMatchesKey(element: CapturedElement, key: string): boolean {
   const label = (element.label ?? '').toLowerCase()
   const placeholder = (element.placeholder ?? '').toLowerCase()
   return name.includes(k) || label.includes(k) || placeholder.includes(k) || k.includes(name)
-}
-
-function staticFallback(element: CapturedElement): string | null {
-  const type = (element.inputType || '').toLowerCase()
-  const name = element.name.toLowerCase()
-  if (type === 'email' || name.includes('email')) return 'testuser@test.com'
-  if (type === 'password' || name.includes('password')) return 'TestPass123!'
-  if (type === 'tel' || name.includes('phone')) return '07700900000'
-  if (type === 'number') return '42'
-  if (type === 'date') return '2024-06-01'
-  if (name.includes('postcode') || name.includes('zip')) return 'SW1A 1AA'
-  if (name.includes('name')) return 'John Smith'
-  return null
 }
 
 function noFill(): FillResult {

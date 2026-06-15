@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import { Table, Tooltip as AntTooltip } from 'antd'
 import { useTheme } from '../theme'
 
@@ -13,6 +13,10 @@ interface GraphElement {
   tag?: string
   inputType?: string
   label?: string
+  placeholder?: string
+  resolvedValue?: string // value filled from Excel/seed during crawl
+  _resolvedValue?: string
+  href?: string
 }
 
 interface GraphNode {
@@ -23,6 +27,8 @@ interface GraphNode {
   assertableElements?: string[]
   className?: string
   pageRef?: string  // always-present derived PascalCase name from backend normalization
+  description?: string  // LLM-generated page description from AI crawler
+  uiLibrary?: string    // detected UI library (bootstrap, material, etc.)
 }
 
 interface GraphEdge {
@@ -164,6 +170,18 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
     [nodes]
   )
 
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([])
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+
+  // Expand the row for targetNodeId and scroll it into view
+  const jumpToNode = (targetNodeId: string) => {
+    setExpandedKeys(prev => prev.includes(targetNodeId) ? prev : [...prev, targetNodeId])
+    setTimeout(() => {
+      const el = tableScrollRef.current?.querySelector(`[data-row-key="${targetNodeId}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 80)
+  }
+
   const tagStyle = (action: string): React.CSSProperties => {
     const c = actionColor(action, isDark)
     return {
@@ -194,14 +212,37 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
       dataIndex: 'title',
       render: (_: string, row: GraphNode & { idx: number }) => (
         <div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>
-            {row.title || '(untitled)'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: C.text }}>
+              {row.title || '(untitled)'}
+            </span>
+            {row.uiLibrary && (
+              <span style={{
+                fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
+                padding: '1px 5px', borderRadius: 3,
+                background: C.blue + '22', color: C.blue, border: `1px solid ${C.blue}44`,
+              }}>
+                {row.uiLibrary}
+              </span>
+            )}
           </div>
           <AntTooltip title={row.url}>
-            <div style={{ fontSize: 11, color: C.muted, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 11, color: C.muted, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: row.description ? 4 : 0 }}>
               {row.url}
             </div>
           </AntTooltip>
+          {row.description && (
+            <AntTooltip title={row.description}>
+              <div style={{
+                fontSize: 11, color: C.muted, maxWidth: 400,
+                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                overflow: 'hidden', lineHeight: 1.4, cursor: 'help',
+                fontStyle: 'italic',
+              }}>
+                {row.description}
+              </div>
+            </AntTooltip>
+          )}
         </div>
       ),
     },
@@ -262,94 +303,196 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
   ]
 
   const expandedRowRender = (row: GraphNode) => {
-    if (!row.elements?.length) {
-      return <span style={{ color: C.muted, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace" }}>No interactable elements found on this page.</span>
-    }
-
     const nodeEdges = edgesByNode[row.nodeId] || []
 
+    // Build element rows with matched edges pre-computed
+    const elRows = (row.elements || []).map((el, i) => {
+      const elName     = (el.name || el.label || '').trim()
+      const elSelector = resolveSelector(el).trim()
+      const matchedEdges: GraphEdge[] = []
+      nodeEdges.forEach(e => {
+        const ek = (e.selectorKey || '').trim()
+        if (ek && (ek === elName || ek === elSelector)) matchedEdges.push(e)
+      })
+      if (matchedEdges.length === 0 && elName) {
+        edges.forEach(e => {
+          const ek = (e.selectorKey || '').trim()
+          if (ek === elName) matchedEdges.push(e)
+        })
+      }
+      return { key: i, el, elName, elSelector, actionType: resolveActionType(el), matchedEdges }
+    })
+
+    const MONO_SM: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }
+    const thStyle: React.CSSProperties = {
+      ...MONO_SM, fontSize: 10, color: C.muted, fontWeight: 600,
+      textTransform: 'uppercase', letterSpacing: '0.05em',
+      padding: '5px 10px', borderBottom: `1px solid ${C.border}`,
+      background: isDark ? '#161b22' : '#f3f4f6',
+      whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1,
+    }
+    const tdStyle: React.CSSProperties = {
+      ...MONO_SM, padding: '6px 10px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top',
+    }
+
+    // Derive possible values for an element
+    const getPossibleValues = (el: GraphElement): string[] => {
+      const action = resolveActionType(el)
+      if (action === 'select') {
+        // name field for selects contains option texts space-separated by the crawler
+        const raw = (el.name || el.label || '').trim()
+        if (raw) return raw.split(/\s{2,}|\n/).flatMap(s => s.trim() ? [s.trim()] : [])
+      }
+      if (action === 'fill') {
+        const vals: string[] = []
+        if (el.placeholder) vals.push(`placeholder: ${el.placeholder}`)
+        const rv = el.resolvedValue || el._resolvedValue
+        if (rv) vals.push(`filled: ${rv}`)
+        return vals
+      }
+      if (action === 'link') {
+        const href = el.href
+        if (href && href !== 'javascript:void(0)') return [href]
+      }
+      return []
+    }
+
     return (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 0', maxHeight: 280, overflowY: 'auto' }}>
-        {row.elements.map((el, i) => {
-          const actionType = resolveActionType(el)
-          const color = actionColor(actionType, isDark)
+      <div style={{ padding: '4px 0 8px' }}>
+        {row.description && (
+          <div style={{
+            ...MONO_SM, color: C.muted, fontStyle: 'italic', marginBottom: 12, lineHeight: 1.5,
+            padding: '8px 12px', background: C.surface2,
+            borderLeft: `3px solid ${C.blue}66`, borderRadius: '0 4px 4px 0',
+          }}>
+            {row.description}
+          </div>
+        )}
 
-          // Find target pages: check by element name and by selectorKey
-          const elName = (el.name || el.label || '').trim()
-          const elSelector = resolveSelector(el).trim()
+        {!elRows.length ? (
+          <span style={{ ...MONO_SM, color: C.muted }}>No interactable elements found on this page.</span>
+        ) : (
+          <div style={{ overflowY: 'auto', maxHeight: 340, border: `1px solid ${C.border}`, borderRadius: 6, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={{ ...thStyle, width: 36, textAlign: 'center' }}>#</th>
+                  <th style={thStyle}>Name</th>
+                  <th style={thStyle}>Locator</th>
+                  <th style={{ ...thStyle, width: 90 }}>Action</th>
+                  <th style={thStyle}>Possible Values</th>
+                  <th style={thStyle}>Target Page</th>
+                </tr>
+              </thead>
+              <tbody>
+                {elRows.map(({ key, el, elName, elSelector, actionType, matchedEdges }) => {
+                  const color = actionColor(actionType, isDark)
+                  const possibleValues = getPossibleValues(el)
+                  return (
+                    <tr key={key} style={{ background: key % 2 === 0 ? 'transparent' : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)') }}>
+                      <td style={{ ...tdStyle, color: C.muted, fontSize: 10, textAlign: 'center' }}>{key + 1}</td>
 
-          // Match edges from this node that correspond to this element
-          const matchedEdges: GraphEdge[] = []
-          nodeEdges.forEach(e => {
-            const ek = (e.selectorKey || '').trim()
-            if (ek && (ek === elName || ek === elSelector)) {
-              matchedEdges.push(e)
-            }
-          })
-          // Fallback: match by element name across all edges
-          if (matchedEdges.length === 0 && elName) {
-            edges.forEach(e => {
-              const ek = (e.selectorKey || '').trim()
-              if (ek === elName) matchedEdges.push(e)
-            })
-          }
+                      {/* Name */}
+                      <td style={{ ...tdStyle, color: C.text, fontWeight: 500, maxWidth: 180 }}>
+                        {elName || <span style={{ color: C.muted }}>—</span>}
+                      </td>
 
-          const tooltipContent = (
-            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, minWidth: 220 }}>
-              <div style={{ color: '#aaa', marginBottom: matchedEdges.length ? 8 : 0 }}>
-                {elSelector || '(no selector)'}
-              </div>
-              {matchedEdges.map((e, ei) => (
-                <div key={ei} style={{
-                  borderTop: '1px solid #2a2a3e', paddingTop: 6, marginTop: ei === 0 ? 0 : 4,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                    <span style={{
-                      fontSize: 9, padding: '1px 5px', borderRadius: 3,
-                      background: '#38bdf833', color: '#38bdf8',
-                      border: '1px solid #38bdf855',
-                    }}>
-                      {e.actionType || e.label || 'navigate'}
-                    </span>
-                    {e.label && e.label !== e.actionType && (
-                      <span style={{ color: '#666', fontSize: 9 }}>{e.label}</span>
-                    )}
-                  </div>
-                  <div style={{ color: '#38bdf8' }}>
-                    → {nodeTitle[e.toNodeId] || e.toNodeId}
-                  </div>
-                  {nodeTitle[e.toNodeId] && (
-                    <div style={{ color: '#555', fontSize: 10, marginTop: 1 }}>{e.toNodeId}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )
+                      {/* Locator */}
+                      <td style={{ ...tdStyle, maxWidth: 220 }}>
+                        <AntTooltip title={elSelector || undefined}>
+                          <code style={{
+                            color: C.muted, display: 'block', fontSize: 10,
+                            maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            cursor: elSelector ? 'help' : 'default',
+                            background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                            borderRadius: 3, padding: '1px 5px',
+                          }}>
+                            {elSelector || '—'}
+                          </code>
+                        </AntTooltip>
+                      </td>
 
-          return (
-            <AntTooltip key={i} title={tooltipContent} color={isDark ? '#1a1a2e' : '#1e293b'}>
-              <div style={{
-                background: C.surface,
-                border: `1px solid ${color}44`,
-                borderRadius: 6,
-                padding: '5px 10px',
-                cursor: 'default',
-                minWidth: 130,
-                position: 'relative',
-              }}>
-                <div style={{ fontSize: 10, color, fontFamily: "'IBM Plex Mono',monospace", marginBottom: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {actionType}
-                  {matchedEdges.length > 0 && (
-                    <span style={{ color: isDark ? '#38bdf8' : '#0284c7', fontSize: 9 }}>↗</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 12, color: C.text, fontFamily: "'IBM Plex Mono',monospace", fontWeight: 500 }}>
-                  {el.name || el.label || resolveSelector(el)}
-                </div>
-              </div>
-            </AntTooltip>
-          )
-        })}
+                      {/* Action */}
+                      <td style={tdStyle}>
+                        <span style={{
+                          fontSize: 10, padding: '2px 7px', borderRadius: 4, fontWeight: 600,
+                          color, background: color + (isDark ? '22' : '18'),
+                          border: `1px solid ${color}${isDark ? '55' : '44'}`,
+                          fontFamily: "'IBM Plex Mono',monospace",
+                        }}>
+                          {actionType}
+                        </span>
+                      </td>
+
+                      {/* Possible Values */}
+                      <td style={{ ...tdStyle, maxWidth: 220 }}>
+                        {possibleValues.length === 0 ? (
+                          <span style={{ color: C.border }}>—</span>
+                        ) : possibleValues.length === 1 ? (
+                          <AntTooltip title={possibleValues[0]}>
+                            <span style={{
+                              color: C.muted, fontSize: 10, display: 'block',
+                              maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              cursor: 'help',
+                            }}>
+                              {possibleValues[0]}
+                            </span>
+                          </AntTooltip>
+                        ) : (
+                          <AntTooltip title={<div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>{possibleValues.map((v, vi) => <div key={vi}>{v}</div>)}</div>}>
+                            <div style={{ cursor: 'help' }}>
+                              {possibleValues.slice(0, 3).map((v, vi) => (
+                                <span key={vi} style={{
+                                  display: 'inline-block', fontSize: 9, margin: '1px 2px',
+                                  padding: '1px 5px', borderRadius: 3,
+                                  background: C.surface2, color: C.muted,
+                                  border: `1px solid ${C.border}`,
+                                  maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  verticalAlign: 'middle',
+                                }}>
+                                  {v}
+                                </span>
+                              ))}
+                              {possibleValues.length > 3 && (
+                                <span style={{ fontSize: 9, color: C.muted }}> +{possibleValues.length - 3}</span>
+                              )}
+                            </div>
+                          </AntTooltip>
+                        )}
+                      </td>
+
+                      {/* Target */}
+                      <td style={{ ...tdStyle, maxWidth: 200 }}>
+                        {matchedEdges.length === 0 ? (
+                          <span style={{ color: C.border }}>—</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {matchedEdges.map((e, ei) => (
+                              <button
+                                key={ei}
+                                onClick={() => jumpToNode(e.toNodeId)}
+                                title={e.toNodeId}
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  color: C.blue, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                                  display: 'block', textAlign: 'left',
+                                  maxWidth: 190, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                  textDecoration: 'underline', textUnderlineOffset: 2,
+                                }}
+                              >
+                                → {nodeTitle[e.toNodeId] || e.toNodeId}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     )
   }
@@ -402,11 +545,16 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
       </div>
 
       {/* Pages table — outer div scrolls, no scroll.y needed on Table */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div ref={tableScrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <Table
           dataSource={rows}
           columns={columns}
-          expandable={{ expandedRowRender, rowExpandable: () => true }}
+          expandable={{
+            expandedRowRender,
+            rowExpandable: () => true,
+            expandedRowKeys: expandedKeys,
+            onExpandedRowsChange: keys => setExpandedKeys(keys as string[]),
+          }}
           size="small"
           pagination={false}
           rowKey="nodeId"

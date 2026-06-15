@@ -8,6 +8,7 @@ export async function reasonFields(
   notes: ParsedNotes,
   llm: BaseChatModel,
   confidenceThreshold: number,
+  flowName?: string,
 ): Promise<FieldReasoning> {
   const fillable = elements.filter(e =>
     (e.elementType === 'textbox' || e.elementType === 'textarea') && !e.blocked
@@ -23,13 +24,17 @@ export async function reasonFields(
 
   const rulesStr = notes.generalRules.join('\n') || '(none)'
 
+  const flowContext = flowName
+    ? `\nActive user flow: "${flowName}" — values must be realistic and relevant to this flow.`
+    : ''
+
   try {
     const prompt = ChatPromptTemplate.fromMessages([
       ['system', `You are a web form filler for automated UI testing.
 For each form field, determine an appropriate test value.
 Return a normalised snake_case key (e.g. "uk_postcode", "email_address") that can be reused across pages.
 Confidence 0.0–1.0: use >0.9 only when you are certain about format/value.
-Fields with confidence below ${confidenceThreshold} should use an empty string for value.`],
+Fields with confidence below ${confidenceThreshold} should use an empty string for value.${flowContext}`],
       ['human', `Crawl notes hints:
 {hints}
 

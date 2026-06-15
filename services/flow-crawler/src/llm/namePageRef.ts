@@ -2,7 +2,10 @@ import { z } from 'zod'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import type { CapturedElement, Node } from '../types.js'
 
-const Schema = z.object({ pageRef: z.string() })
+const Schema = z.object({
+  pageRef:     z.string(),
+  description: z.string(),
+})
 
 // Returns the pageRef from an existing node if ≥80% of element labels overlap
 export function findExistingPageRef(
@@ -40,6 +43,11 @@ export function findExistingPageRef(
   return bestScore >= 0.8 ? bestRef : null
 }
 
+export interface PageMeta {
+  pageRef:     string
+  description: string
+}
+
 export async function namePageRef(
   title:         string,
   url:           string,
@@ -47,10 +55,13 @@ export async function namePageRef(
   llm:           BaseChatModel,
   existingNodes: Record<string, Node> = {},
   usedNames:     Set<string> = new Set(),
-): Promise<string> {
-  // Reuse existing name if page is sufficiently similar
+): Promise<PageMeta> {
+  // Reuse existing name if page is sufficiently similar (description not re-generated)
   const existing = findExistingPageRef(elements, existingNodes)
-  if (existing) return existing
+  if (existing) {
+    const existingNode = Object.values(existingNodes).find(n => n.pageRef === existing)
+    return { pageRef: existing, description: existingNode?.description ?? '' }
+  }
 
   const fields = elements
     .filter(e => e.elementType === 'textbox' || e.elementType === 'textarea' ||
@@ -71,27 +82,31 @@ export async function namePageRef(
     : ''
 
   const prompt =
-    `You are naming a web page state for a UI automation graph.
+    `You are analysing a web page state for a UI automation graph.
 
 Page title: ${title}
 Page URL: ${url}
 
 ${elSection}
 ${avoidSection}
-Give this page state a concise, descriptive reference name (3-7 words) that:
-- Prioritises the FORM FIELDS to describe what the user fills in (e.g. "City and Zip Code Entry", "Network Plan Selection")
-- Falls back to the primary ACTION if there are no fields (e.g. "Browse by Category", "Search Results View")
-- Is DISTINCT from all already-used names above
+Return two things:
 
-Rules:
-- Do NOT include any dates, years, or timestamps
-- Do NOT include version numbers or dynamic values
-- Return ONLY the pageRef string — no quotes, no explanation`
+1. pageRef — a concise reference name (3-7 words) that:
+   - Prioritises FORM FIELDS to describe what the user fills in (e.g. "City and Zip Code Entry", "Network Plan Selection")
+   - Falls back to the primary ACTION if there are no fields (e.g. "Browse by Category", "Search Results View")
+   - Is DISTINCT from all already-used names above
+   - Does NOT include dates, years, version numbers, or dynamic values
+
+2. description — 1-2 sentences describing:
+   - What this page/step is for in the user journey
+   - Who the target user is (e.g. member, non-member, provider) if determinable from context
+   - What the user must do here to proceed (e.g. "User selects their network plan and clicks Continue to advance enrollment")
+   - Keep it factual and useful for an LLM planning E2E test steps`
 
   try {
     const result = await llm.withStructuredOutput(Schema).invoke(prompt)
-    return result.pageRef.trim()
+    return { pageRef: result.pageRef.trim(), description: result.description.trim() }
   } catch {
-    return title
+    return { pageRef: title, description: '' }
   }
 }

@@ -66,8 +66,9 @@ export async function dispatch(
     // ── Link ───────────────────────────────────────────────────────────────────
     if (type === 'link') {
       const result = await linkHandler.follow(page, element)
-      if (result.opensNewTab) return { action: 'new_tab', navigated: false, toUrl: result.toUrl, newTab: result.newTab, newElements: [] }
-      if (result.navigated)   return { action: 'navigate', navigated: true, toUrl: result.toUrl, newTab: null, newElements: [] }
+      if (result.opensNewTab)    return { action: 'new_tab',      navigated: false, toUrl: result.toUrl, newTab: result.newTab, newElements: [] }
+      if (result.navigated)      return { action: 'navigate',     navigated: true,  toUrl: result.toUrl, newTab: null, newElements: [] }
+      if (result.contentChanged) return { action: 'content_change', navigated: false, toUrl: null, newTab: null, newElements: [] }
       return skip()
     }
 
@@ -81,13 +82,17 @@ export async function dispatch(
 
     // ── Combobox / Select ──────────────────────────────────────────────────────
     if (type === 'combobox' || type === 'select') {
+      // If this element IS already a dropdown option (role="option"), click it directly
+      if (selector.includes('[role="option"]') || selector.startsWith('mat-option')) {
+        await safeClick(page, selector)
+        await page.waitForTimeout(300)
+        return { action: 'content_change', navigated: false, toUrl: null, newTab: null, newElements: [] }
+      }
       const libHandler = getLibInteractor(uiLibrary, type)
       if (resolvedValue) {
-        // Fill with specific value
         if (libHandler?.fill) {
           await libHandler.fill(page, selector, resolvedValue)
         } else {
-          // Native <select>
           await page.selectOption(selector, { label: resolvedValue }).catch(async () => {
             await page.selectOption(selector, { value: resolvedValue }).catch(() => {})
           })
