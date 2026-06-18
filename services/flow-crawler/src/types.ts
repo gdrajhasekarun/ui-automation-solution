@@ -61,6 +61,7 @@ export const CapturedElementSchema = z.object({
   // Internal — not serialised to graph
   _selector:        z.string().optional(),
   _resolvedValue:   z.string().nullable().optional(),
+  _selectOptions:   z.array(z.string()).optional(),
 })
 export type CapturedElement = z.infer<typeof CapturedElementSchema>
 

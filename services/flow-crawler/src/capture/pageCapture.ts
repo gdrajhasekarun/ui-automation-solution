@@ -175,10 +175,21 @@ export async function capturePageElements(
           if (this.isBoilerplate(rawLabel)) continue
           if (attrHref === '#' && !ariaLabel && !titleAttr) continue
 
-          const selector = this.buildSelector(targetEl, targetTag, ariaLabel, attrHref, placeholder)
-
           const dedupeKey = `${rawLabel.slice(0, 60)}||${targetTag}`
-          if (this.seen.has(dedupeKey)) continue
+          const selector = this.buildSelector(targetEl, targetTag, ariaLabel, attrHref, placeholder)
+          const hasId = selector.startsWith('#')
+          if (this.seen.has(dedupeKey)) {
+            // Replace previous entry only if this element has an ID-based selector and the prior one doesn't
+            if (!hasId) continue
+            const existingIdx = this.results.findIndex((r: any) =>
+              `${r.label.slice(0, 60)}||${r.tag}` === dedupeKey
+            )
+            if (existingIdx !== -1 && !this.results[existingIdx].selector.startsWith('#')) {
+              this.results.splice(existingIdx, 1)
+            } else {
+              continue
+            }
+          }
           this.seen.add(dedupeKey)
 
           const required = (targetEl as HTMLInputElement).required || targetEl.getAttribute('aria-required') === 'true'

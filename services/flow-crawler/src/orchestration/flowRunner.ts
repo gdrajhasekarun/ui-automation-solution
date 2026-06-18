@@ -119,6 +119,7 @@ export async function runFromPage(
 
     while (iterations++ < MAX_SAME_PAGE_ITERS) {
       // Step 1: fill all form fields (including combobox/select dropdowns)
+      const filledThisIteration: string[] = []
       const formFields = currentElements.filter(e =>
         e.elementType === 'textbox' || e.elementType === 'textarea' ||
         e.elementType === 'select'  || e.elementType === 'combobox'
@@ -126,14 +127,42 @@ export async function runFromPage(
       for (const element of formFields) {
         if (!element._selector) continue
 
-        // Skip pre-populated fields
+        // Skip fields the crawler already filled this session
+        if (element._resolvedValue) {
+          log.info('INTERACT', `  → skip     "${element.name}"  (already filled: "${element._resolvedValue}")`)
+          continue
+        }
+
+        // Skip readonly fields (site pre-filled demo credentials etc.) — fill() will timeout on them
+        const isReadonly = await page.evaluate((sel) => {
+          const el = document.querySelector(sel) as HTMLInputElement | null
+          return el ? el.readOnly || el.hasAttribute('readonly') : false
+        }, element._selector).catch(() => false)
+        if (isReadonly) {
+          log.info('INTERACT', `  → skip     "${element.name}"  (readonly)`)
+          continue
+        }
+
+        // Skip editable fields that already have a value (browser autofill or previous step)
+        // Exception: select/combobox defaults should still be overridden by the LLM if the flow requires it
         const currentVal = await page.evaluate((sel) => {
-          const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
-          return el ? (el as HTMLInputElement).value?.trim() ?? '' : ''
+          const el = document.querySelector(sel) as HTMLInputElement | HTMLTextAreaElement | null
+          return el ? el.value?.trim() ?? '' : ''
         }, element._selector).catch(() => '')
-        if (currentVal) {
+        const isDropdown = element.elementType === 'select' || element.elementType === 'combobox'
+        if (currentVal && !isDropdown) {
           log.info('INTERACT', `  → skip     "${element.name}"  (pre-populated: "${currentVal}")`)
           continue
+        }
+
+        // For select/combobox: read available options from DOM and attach to element for LLM reasoning
+        if (element.elementType === 'select' || element.elementType === 'combobox') {
+          const opts = await page.evaluate((sel) => {
+            const el = document.querySelector(sel) as HTMLSelectElement | null
+            if (!el) return []
+            return Array.from(el.options).map(o => o.text.trim()).filter(t => t.length > 0)
+          }, element._selector!).catch(() => [] as string[])
+          if (opts.length) element._selectOptions = opts
         }
 
         const fillResult = await resolveValue(
@@ -212,6 +241,7 @@ export async function runFromPage(
           element.fillSource     = fillResult.source
           element.fillConfidence = fillResult.confidence
           log.step('INTERACT', `  → fill     "${element.name}"  value="${valueToFill}"  source=${fillResult.source}`)
+          filledThisIteration.push(element.name)
           await dispatch(page, element, currentElements, [element], library, config.headless, valueToFill)
           await waitForIdle(page)
           if (fillResult.source === 'llm' || fillResult.source === 'excel') graph.incrementLLMCalls()
@@ -241,7 +271,7 @@ export async function runFromPage(
         log.info('PICK', `    [${String(i + 1).padStart(3)}] ${e.elementType.padEnd(8)} "${e.name}"  selector=${e._selector}`)
       })
 
-      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM)
+      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM, filledThisIteration)
       graph.incrementLLMCalls()
 
       if (!pick) {
@@ -477,7 +507,15 @@ export async function runCrawlLoop(
   // ── Initial Phase A crawl ───────────────────────────────────────────────────
   const page = await context.newPage()
   try {
-    await page.goto(config.seedUrl, { waitUntil: 'networkidle', timeout: 30000 })
+    log.info('CRAWL', `Navigating to seed: ${config.seedUrl}`)
+    const gotoResp = await page.goto(config.seedUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch((err: Error) => {
+      log.warn('CRAWL', `goto error: ${err.message}`)
+      return null
+    })
+    log.info('CRAWL', `goto response status: ${gotoResp?.status() ?? 'null'}  url: ${page.url()}`)
+    log.info('CRAWL', `page title: "${await page.title()}"`)
+    const bodySnippet = await page.evaluate(() => document.body?.innerText?.slice(0, 300) ?? '').catch(() => '')
+    log.info('CRAWL', `body snippet: ${bodySnippet.replace(/\n/g, ' ')}`)
     await runFromPage(page, nodeId(normalizeUrl(config.seedUrl)), graph, config, {
       excelData, notes, cache, smartLLM, fastLLM,
       branchQueue, pathManager, phaseBSteps: [], depth: 0, existingNodes,

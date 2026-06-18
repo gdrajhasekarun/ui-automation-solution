@@ -59,11 +59,14 @@ export async function resolveValue(
     }
   }
 
-  // Level 3: Cache lookup
+  // Level 3: Cache lookup — skip for select/combobox when flowName is active (options are flow-specific)
+  const isDropdown = type === 'select' || type === 'combobox'
   const cacheKey = Cache.buildKey({ normalizedUrl, elementName, elementType: type })
-  const cached = await cache.get(cacheKey)
-  if (cached) {
-    return { value: cached.value, key: cached.key, source: 'cache', confidence: cached.confidence }
+  if (!isDropdown || !flowName) {
+    const cached = await cache.get(cacheKey)
+    if (cached) {
+      return { value: cached.value, key: cached.key, source: 'cache', confidence: cached.confidence }
+    }
   }
 
   // Level 4: LLM

@@ -38,7 +38,10 @@ export async function dispatch(
     if (type === 'textbox' || type === 'textarea') {
       if (!resolvedValue) return skip()
       const libHandler = getLibInteractor(uiLibrary, type)
-      if (libHandler?.fill) {
+      const isDateValue = /^\d{1,4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,4}$/.test(resolvedValue.trim())
+      if (isDateValue) {
+        await textHandler.fillDate(page, selector, resolvedValue)
+      } else if (libHandler?.fill) {
         await libHandler.fill(page, selector, resolvedValue)
       } else {
         await textHandler.fill(page, selector, resolvedValue)

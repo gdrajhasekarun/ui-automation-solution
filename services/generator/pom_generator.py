@@ -145,15 +145,15 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
 
     # crawl-ai edges use "from"/"to" (not "fromNodeId"/"toNodeId")
     edges_from = [e for e in graph.get("edges", []) if e.get("from") == node_id]
+    # Key by elementId so lookup works regardless of selector format
     edge_targets: dict[str, tuple[str, bool]] = {}
     for e in edges_from:
-        # crawl-ai stores trigger element name; use as selector key fallback
-        sk = e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label") or ""
-        if not sk:
+        elem_id = e.get("trigger", {}).get("elementId") or e.get("elementId") or ""
+        if not elem_id:
             continue
         to_nid = e.get("to", "")
         target_class = node_class_map.get(to_nid, "UnknownPage")
-        edge_targets[sk] = (target_class, to_nid == node_id)
+        edge_targets[elem_id] = (target_class, to_nid == node_id)
 
     elements = node.get("elements", [])
     assertable = node.get("assertableElements", [])
@@ -221,10 +221,13 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or elem.get("elementType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
             mname = _unique_method(_method_name("click", label, sk, elem))
@@ -234,7 +237,7 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
                 f"        return {ret_expr};\n"
                 f"    }}"
             )
-        elif action in ("fill", "input"):
+        elif action == "fill":
             mname = _unique_method(_method_name("enter", label, sk, elem))
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"

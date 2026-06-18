@@ -19,11 +19,13 @@ const _jobs = new Map<string, JobRecord>()
 
 async function notifyGenerator(appId: string, jobId: string, frameworkDir: string, targetTool: string): Promise<void> {
   try {
-    const endpoint = targetTool ? `${GENERATOR_URL}/v2/trigger` : `${GENERATOR_URL}/trigger`
+    const VALID_TOOLS = ['selenium-java','selenium-csharp','selenium-python','playwright-js','playwright-ts','playwright-python','cypress-js','cypress-ts']
+    const resolvedTool = VALID_TOOLS.includes(targetTool) ? targetTool : 'selenium-java'
+    const endpoint = `${GENERATOR_URL}/v2/trigger`
     await fetch(endpoint, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ app_id: appId, build_id: jobId, framework_dir: frameworkDir, target_tool: targetTool }),
+      body:    JSON.stringify({ app_id: appId, build_id: jobId, framework_dir: frameworkDir, target_tool: resolvedTool }),
       signal:  AbortSignal.timeout(10000),
     })
     log.info('GENERATOR', `Notified generator for app_id=${appId}  target_tool=${targetTool || 'default'}`)

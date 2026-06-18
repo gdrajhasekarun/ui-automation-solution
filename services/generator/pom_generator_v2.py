@@ -172,14 +172,18 @@ def _extract_elements(node: dict, node_id: str, graph: dict):
     edge_targets: dict of selectorKey → (target_class_name, is_self)
     """
     raw_nodes = graph.get("nodes", {})
+    def _node_class(n: dict) -> str:
+        raw = n.get("pageRef") or ""
+        return _pascal(raw) if raw else _class_name_from_node(n)
+
     if isinstance(raw_nodes, list):
         node_class_map: dict[str, str] = {
-            n.get("nodeId", str(i)): (n.get("pageRef") or _class_name_from_node(n))
+            n.get("nodeId", str(i)): _node_class(n)
             for i, n in enumerate(raw_nodes)
         }
     else:
         node_class_map = {
-            nid: (n.get("pageRef") or _class_name_from_node(n))
+            nid: _node_class(n)
             for nid, n in raw_nodes.items()
         }
     # edges support both raw (from/to) and normalized (fromNodeId/toNodeId) formats
@@ -187,13 +191,14 @@ def _extract_elements(node: dict, node_id: str, graph: dict):
         e for e in graph.get("edges", [])
         if (e.get("from") or e.get("fromNodeId")) == node_id
     ]
+    # Key by elementId (present on every trigger) so lookup works regardless of selector format
     edge_targets: dict[str, tuple[str, bool]] = {}
     for e in edges_from:
-        sk = e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label") or ""
-        if not sk:
+        elem_id = e.get("trigger", {}).get("elementId") or e.get("elementId") or ""
+        if not elem_id:
             continue
         to_nid = e.get("to") or e.get("toNodeId") or ""
-        edge_targets[sk] = (node_class_map.get(to_nid, "UnknownPage"), to_nid == node_id)
+        edge_targets[elem_id] = (node_class_map.get(to_nid, "UnknownPage"), to_nid == node_id)
 
     elements = node.get("elements", [])
     seen_sk: set[str] = set()
@@ -256,10 +261,13 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
             mname = _unique(_method_name("click", label, sk, elem))
@@ -306,7 +314,7 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
         f"        super(driver);\n"
         f"{constructor_asserts}\n"
         f"    }}\n\n"
-        + "\n\n".join(methods) + "\n}}\n"
+        + "\n\n".join(methods) + "\n}\n"
     )
 
 
@@ -350,10 +358,13 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
             mname = _unique(_pascal_method("Click", label, sk, elem))
@@ -446,16 +457,20 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
         fname = field_name(cname)
 
-        if sk in edge_targets:
-            target_class, _ = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "this" if is_self else f"new {target_class}(this.page)"
             mname = _unique(_method_name("click", label, sk, elem))
             methods.append(
                 f"    async {mname}() {{\n"
                 f"        await this.{fname}.click();\n"
-                f"        return new {target_class}(this.page);\n"
+                f"        return {ret_expr};\n"
                 f"    }}"
             )
         elif action == "fill":
@@ -535,11 +550,14 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
         fname = field_name(cname)
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(this.page)"
             mname = _unique(_method_name("click", label, sk, elem))
@@ -634,16 +652,20 @@ def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name:
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             ret_class = class_name if is_self else target_class
+            ret_expr = "self" if is_self else f"{ret_class}(self.driver)"
             mname = _unique(_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.driver.find_element(*self.{cname}).click()\n"
-                f"        return self if {str(is_self).lower() == 'true'} else {ret_class}(self.driver)"
+                f"        return {ret_expr}"
             )
         elif action == "fill":
             mname = _unique(_snake(label, elem, sk))
@@ -718,20 +740,20 @@ def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_nam
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
         fname = field_name(cname)
 
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
-            ret_class = class_name if is_self else target_class
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "self" if is_self else f"{target_class}(self.page)"
             mname = _unique(_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.{fname}.click()\n"
-                f"        return self" if is_self else
-                f"    def {mname}(self):\n"
-                f"        self.{fname}.click()\n"
-                f"        return {ret_class}(self.page)"
+                f"        return {ret_expr}"
             )
         elif action == "fill":
             mname = _unique(_snake(label, elem, sk))
@@ -802,16 +824,20 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
         getter = cname.lower()
 
-        if sk in edge_targets:
-            target_class, _ = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "this" if is_self else f"new {target_class}()"
             mname = _unique(_method_name("click", label, sk, elem))
             methods.append(
                 f"    {mname}() {{\n"
                 f"        this.{getter}.click();\n"
-                f"        return new {target_class}();\n"
+                f"        return {ret_expr};\n"
                 f"    }}"
             )
         elif action == "fill":
@@ -873,16 +899,21 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
-        action = elem.get("actionType") or "click"
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
         getter = cname.lower()
 
-        if sk in edge_targets:
-            target_class, _ = edge_targets[sk]
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_type = class_name if is_self else target_class
+            ret_expr = "this" if is_self else f"new {target_class}()"
             mname = _unique(_method_name("click", label, sk, elem))
             methods.append(
-                f"    {mname}(): {target_class} {{\n"
+                f"    {mname}(): {ret_type} {{\n"
                 f"        this.{getter}.click();\n"
-                f"        return new {target_class}();\n"
+                f"        return {ret_expr};\n"
                 f"    }}"
             )
         elif action == "fill":
@@ -935,7 +966,8 @@ _GENERATORS = {
 
 def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "selenium-java") -> dict:
     if target_tool not in _GENERATORS:
-        raise ValueError(f"Unknown target_tool '{target_tool}'. Valid: {list(_GENERATORS)}")
+        logger.warning(f"Unknown target_tool '{target_tool}', defaulting to selenium-java")
+        target_tool = "selenium-java"
 
     generate_fn, ext = _GENERATORS[target_tool]
 
@@ -959,7 +991,8 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
             logger.info(f"Skipping {node.get('url', '?')} — no interactable elements")
             continue
 
-        class_name = node.get("pageRef") or _class_name_from_node(node)
+        raw_ref = node.get("pageRef") or ""
+        class_name = _pascal(raw_ref) if raw_ref else _class_name_from_node(node)
         if class_name in seen_classes:
             suffix = node_id[-4:]
             class_name = class_name[:-4] + suffix.capitalize() + "Page"
