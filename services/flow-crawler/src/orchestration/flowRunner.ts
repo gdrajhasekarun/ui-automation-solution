@@ -52,6 +52,25 @@ export async function runFromPage(
   const library  = await detectUILibrary(page)
   const allElements = await capturePageElements(page, library)  // full set — always stored in graph
   let elements = allElements                                     // may be narrowed by LLM filter for interaction
+
+  // Stabilise element names across runs: if a previous graph has an element with the same
+  // selector on this page, reuse its stored name so POM method names don't drift.
+  const selectorToStoredName = new Map<string, string>()
+  for (const node of Object.values(ctx.existingNodes)) {
+    for (const el of (node.elements ?? [])) {
+      if (el._selector && el.name) selectorToStoredName.set(el._selector, el.name)
+    }
+  }
+  for (const el of allElements) {
+    if (el._selector && selectorToStoredName.has(el._selector)) {
+      const stored = selectorToStoredName.get(el._selector)!
+      if (stored !== el.name) {
+        log.info('CAPTURE', `  stabilise name: "${el.name}" → "${stored}"  selector=${el._selector}`)
+        el.name = stored
+        el.label = stored
+      }
+    }
+  }
   const title = await page.title()
 
   // When the same URL appears with different content (wizard steps), use element fingerprint

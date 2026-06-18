@@ -24,6 +24,51 @@ logger = logging.getLogger("generator.pom_gen_v2")
 HEADER = "// AUTO-GENERATED — DO NOT EDIT\n// Regenerate via POST /v2/trigger\n\n"
 HEADER_PY = "# AUTO-GENERATED — DO NOT EDIT\n# Regenerate via POST /v2/trigger\n\n"
 
+
+# ── Name registry — persists constName/methodName across runs ─────────────────
+
+def _load_name_registry(path: str) -> dict:
+    """Load {selectorKey: {constName, methodName}} from disk, or return empty dict."""
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_name_registry(path: str, registry: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(registry, f, indent=2)
+
+
+def _pick_method_name(prefix: str, label: str, sk: str, elem: dict,
+                      name_registry: dict, seen_methods: dict,
+                      computed_base: str | None = None) -> str:
+    """Return the stored method name for sk if available, otherwise compute and store a new one.
+
+    Pass computed_base to override _method_name() — used by Python generators that produce
+    snake_case names via _snake().
+    """
+    stored = name_registry.get(sk, {}).get("methodName")
+    if stored:
+        seen_methods[stored] = seen_methods.get(stored, 0) + 1
+        return stored
+    base = computed_base if computed_base is not None else _method_name(prefix, label, sk, elem)
+    # Preserve separator style: snake_case uses "_N", camelCase uses "N"
+    sep = "_" if "_" in base else ""
+    if base not in seen_methods:
+        name = base
+    else:
+        count = seen_methods[base] + 1
+        while f"{base}{sep}{count}" in seen_methods:
+            count += 1
+        name = f"{base}{sep}{count}"
+    seen_methods[name] = 1
+    name_registry.setdefault(sk, {})["methodName"] = name
+    return name
+
 # ── Shared helpers (copied from pom_generator.py) ────────────────────────────
 
 def _pascal(s: str) -> str:
@@ -165,12 +210,15 @@ def file_extension(target_tool: str) -> str:
 
 # ── Element extraction helper ─────────────────────────────────────────────────
 
-def _extract_elements(node: dict, node_id: str, graph: dict):
+def _extract_elements(node: dict, node_id: str, graph: dict, name_registry: dict | None = None):
     """Return (elem_consts, edge_targets) for a node.
 
     elem_consts: list of (const_name, loc_type, loc_val, elem)
     edge_targets: dict of selectorKey → (target_class_name, is_self)
+    name_registry: if provided, stored constNames are reused and new ones are written back.
     """
+    if name_registry is None:
+        name_registry = {}
     raw_nodes = graph.get("nodes", {})
     def _node_class(n: dict) -> str:
         raw = n.get("pageRef") or ""
@@ -210,18 +258,31 @@ def _extract_elements(node: dict, node_id: str, graph: dict):
             unique_elements.append(elem)
 
     seen_const: set[str] = set()
+    # Pre-seed seen_const with stored constNames so new elements don't collide
+    for elem in unique_elements:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        stored_cname = name_registry.get(sk, {}).get("constName")
+        if stored_cname:
+            seen_const.add(stored_cname)
+
     elem_consts: list[tuple[str, str, str, dict]] = []
     for elem in unique_elements:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
         loc_type, loc_val = _parse_locator(sk)
-        cname = _const_name(label, el=elem, selector_key=sk)
-        if cname in seen_const:
-            base, counter = cname, 2
-            while f"{base}_{counter}" in seen_const:
-                counter += 1
-            cname = f"{base}_{counter}"
-        seen_const.add(cname)
+        # Reuse stored constName if available
+        stored_cname = name_registry.get(sk, {}).get("constName")
+        if stored_cname:
+            cname = stored_cname
+        else:
+            cname = _const_name(label, el=elem, selector_key=sk)
+            if cname in seen_const:
+                base, counter = cname, 2
+                while f"{base}_{counter}" in seen_const:
+                    counter += 1
+                cname = f"{base}_{counter}"
+            seen_const.add(cname)
+            name_registry.setdefault(sk, {})["constName"] = cname
         elem_consts.append((cname, loc_type, loc_val, elem))
 
     return elem_consts, edge_targets
@@ -229,8 +290,11 @@ def _extract_elements(node: dict, node_id: str, graph: dict):
 
 # ── Selenium Java ─────────────────────────────────────────────────────────────
 
-def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_java(node: dict, node_id: str, graph: dict, class_name: str,
+                   name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     def _java_str(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
@@ -250,14 +314,6 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
 
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
-
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
@@ -270,7 +326,7 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
             target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {ret_type} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -278,7 +334,7 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        fill({cname}, value);\n"
@@ -286,7 +342,7 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        select({cname}, value);\n"
@@ -294,7 +350,7 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str) -> st
                 f"    }}"
             )
         else:
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -332,8 +388,11 @@ def _cs_by(loc_type: str, loc_val: str) -> str:
     return f'By.CssSelector("{_cs_str(loc_val)}")'
 
 
-def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     constants_lines = [
         f"        private static readonly By {cname} = {_cs_by(loc_type, loc_val)};"
@@ -343,17 +402,12 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
 
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
-
     def _pascal_method(prefix: str, label: str, sk: str, elem: dict) -> str:
         words = _semantic_words(label, elem, sk)
         return prefix + "".join(w.capitalize() for w in words)
+
+    def _pick_cs(prefix: str, label: str, sk: str, elem: dict) -> str:
+        return _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods)
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -367,7 +421,7 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
             target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
-            mname = _unique(_pascal_method("Click", label, sk, elem))
+            mname = _pick_cs("Click", label, sk, elem)
             methods.append(
                 f"        public {ret_type} {mname}()\n"
                 f"        {{\n"
@@ -376,7 +430,7 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
                 f"        }}"
             )
         elif action == "fill":
-            mname = _unique(_pascal_method("Enter", label, sk, elem))
+            mname = _pick_cs("Enter", label, sk, elem)
             methods.append(
                 f"        public {class_name} {mname}(string value)\n"
                 f"        {{\n"
@@ -385,7 +439,7 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
                 f"        }}"
             )
         elif action == "select":
-            mname = _unique(_pascal_method("Select", label, sk, elem))
+            mname = _pick_cs("Select", label, sk, elem)
             methods.append(
                 f"        public {class_name} {mname}(string value)\n"
                 f"        {{\n"
@@ -394,7 +448,7 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str) -> 
                 f"        }}"
             )
         else:
-            mname = _unique(_pascal_method("Click", label, sk, elem))
+            mname = _pick_cs("Click", label, sk, elem)
             methods.append(
                 f"        public {class_name} {mname}()\n"
                 f"        {{\n"
@@ -433,8 +487,11 @@ def _pw_locator(loc_type: str, loc_val: str) -> str:
 
 # ── Playwright JS ─────────────────────────────────────────────────────────────
 
-def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: str,
+                            name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     field_name = lambda cname: cname.lower().replace("_", "")
 
@@ -445,14 +502,6 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
-
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -466,7 +515,7 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
         if elem_id in edge_targets:
             target_class, is_self = edge_targets[elem_id]
             ret_expr = "this" if is_self else f"new {target_class}(this.page)"
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}() {{\n"
                 f"        await this.{fname}.click();\n"
@@ -474,7 +523,7 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(value) {{\n"
                 f"        await this.{fname}.fill(value);\n"
@@ -482,7 +531,7 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(value) {{\n"
                 f"        await this.{fname}.selectOption(value);\n"
@@ -490,7 +539,7 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         else:
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}() {{\n"
                 f"        await this.{fname}.click();\n"
@@ -513,8 +562,11 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
 
 # ── Playwright TypeScript ─────────────────────────────────────────────────────
 
-def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: str,
+                            name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     field_name = lambda cname: cname.lower().replace("_", "")
 
@@ -539,14 +591,6 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
 
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
-
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
         label = (elem.get("label") or elem.get("name") or "").strip()
@@ -560,7 +604,7 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
             target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(this.page)"
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(): Promise<{ret_type}> {{\n"
                 f"        await this.{fname}.click();\n"
@@ -568,7 +612,7 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(value: string): Promise<this> {{\n"
                 f"        await this.{fname}.fill(value);\n"
@@ -576,7 +620,7 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(value: string): Promise<this> {{\n"
                 f"        await this.{fname}.selectOption(value);\n"
@@ -584,7 +628,7 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
         else:
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    async {mname}(): Promise<this> {{\n"
                 f"        await this.{fname}.click();\n"
@@ -630,8 +674,11 @@ def _snake(label: str, el: dict | None = None, selector_key: str = "") -> str:
     return "_".join(w.lower() for w in words)
 
 
-def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name: str,
+                              name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     locator_lines = [
         f'    {cname} = ({_py_locator(loc_type, loc_val)})'
@@ -640,14 +687,6 @@ def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name:
 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
-
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}_{count}"
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -661,14 +700,14 @@ def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name:
             target_class, is_self = edge_targets[elem_id]
             ret_class = class_name if is_self else target_class
             ret_expr = "self" if is_self else f"{ret_class}(self.driver)"
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.driver.find_element(*self.{cname}).click()\n"
                 f"        return {ret_expr}"
             )
         elif action == "fill":
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self, value: str):\n"
                 f"        self.driver.find_element(*self.{cname}).clear()\n"
@@ -676,7 +715,7 @@ def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name:
                 f"        return self"
             )
         elif action == "select":
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self, value: str):\n"
                 f"        from selenium.webdriver.support.ui import Select\n"
@@ -684,7 +723,7 @@ def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name:
                 f"        return self"
             )
         else:
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.driver.find_element(*self.{cname}).click()\n"
@@ -716,8 +755,11 @@ def _pw_py_locator(loc_type: str, loc_val: str) -> str:
     return f'"{_py_str(loc_val)}"'
 
 
-def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_name: str,
+                                name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     field_name = lambda cname: cname.lower().replace("_", "")
 
@@ -728,14 +770,6 @@ def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_nam
 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
-
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}_{count}"
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -749,28 +783,28 @@ def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_nam
         if elem_id in edge_targets:
             target_class, is_self = edge_targets[elem_id]
             ret_expr = "self" if is_self else f"{target_class}(self.page)"
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.{fname}.click()\n"
                 f"        return {ret_expr}"
             )
         elif action == "fill":
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self, value: str):\n"
                 f"        self.{fname}.fill(value)\n"
                 f"        return self"
             )
         elif action == "select":
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self, value: str):\n"
                 f"        self.{fname}.select_option(value)\n"
                 f"        return self"
             )
         else:
-            mname = _unique(_snake(label, elem, sk))
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
             methods.append(
                 f"    def {mname}(self):\n"
                 f"        self.{fname}.click()\n"
@@ -802,8 +836,11 @@ def _cy_locator(loc_type: str, loc_val: str) -> str:
     return f"'{_js_str(loc_val)}'"
 
 
-def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str,
+                         name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     getter_lines = [
         f"    get {cname.lower()}() {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
@@ -812,14 +849,6 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
-
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -833,7 +862,7 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
         if elem_id in edge_targets:
             target_class, is_self = edge_targets[elem_id]
             ret_expr = "this" if is_self else f"new {target_class}()"
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}() {{\n"
                 f"        this.{getter}.click();\n"
@@ -841,7 +870,7 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(value) {{\n"
                 f"        this.{getter}.clear().type(value);\n"
@@ -849,7 +878,7 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(value) {{\n"
                 f"        this.{getter}.select(value);\n"
@@ -857,7 +886,7 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         else:
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}() {{\n"
                 f"        this.{getter}.click();\n"
@@ -877,8 +906,11 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str)
 
 # ── Cypress TypeScript ────────────────────────────────────────────────────────
 
-def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    elem_consts, edge_targets = _extract_elements(node, node_id, graph)
+def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str,
+                         name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry)
 
     getter_lines = [
         f"    get {cname.lower()}(): Cypress.Chainable {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
@@ -887,14 +919,6 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
 
     methods: list[str] = []
     seen_methods: dict[str, int] = {}
-
-    def _unique(name: str) -> str:
-        if name not in seen_methods:
-            seen_methods[name] = 1
-            return name
-        count = seen_methods[name] + 1
-        seen_methods[name] = count
-        return f"{name}{count}"
 
     for cname, _, _, elem in elem_consts:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
@@ -909,7 +933,7 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
             target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}()"
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(): {ret_type} {{\n"
                 f"        this.{getter}.click();\n"
@@ -917,7 +941,7 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(value: string): this {{\n"
                 f"        this.{getter}.clear().type(value);\n"
@@ -925,7 +949,7 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(value: string): this {{\n"
                 f"        this.{getter}.select(value);\n"
@@ -933,7 +957,7 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str)
                 f"    }}"
             )
         else:
-            mname = _unique(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    {mname}(): this {{\n"
                 f"        this.{getter}.click();\n"
@@ -964,6 +988,13 @@ _GENERATORS = {
 }
 
 
+def _nodes_iter_from_graph(graph: dict):
+    raw_nodes = graph.get("nodes", {})
+    if isinstance(raw_nodes, list):
+        return [(n.get("nodeId", str(i)), n) for i, n in enumerate(raw_nodes)]
+    return list(raw_nodes.items())
+
+
 def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "selenium-java") -> dict:
     if target_tool not in _GENERATORS:
         logger.warning(f"Unknown target_tool '{target_tool}', defaulting to selenium-java")
@@ -974,12 +1005,11 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
     with open(graph_path) as f:
         graph = json.load(f)
 
-    # Support both dict-format nodes (app-graph-crawler) and list-format (crawl-ai)
-    raw_nodes = graph.get("nodes", {})
-    if isinstance(raw_nodes, list):
-        nodes_iter = [(n.get("nodeId", str(i)), n) for i, n in enumerate(raw_nodes)]
-    else:
-        nodes_iter = list(raw_nodes.items())
+    # Load persisted name registry so element/method names survive re-runs
+    registry_path = os.path.join(os.path.dirname(graph_path), "name_registry.json")
+    name_registry = _load_name_registry(registry_path)
+
+    nodes_iter = _nodes_iter_from_graph(graph)
 
     os.makedirs(output_dir, exist_ok=True)
     written = []
@@ -998,12 +1028,15 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
             class_name = class_name[:-4] + suffix.capitalize() + "Page"
         seen_classes.add(class_name)
 
-        content = generate_fn(node, node_id, graph, class_name)
+        content = generate_fn(node, node_id, graph, class_name, name_registry)
         file_path = os.path.join(output_dir, f"{class_name}{ext}")
         with open(file_path, "w") as f:
             f.write(content)
         written.append({"class": class_name, "path": file_path, "node_id": node_id})
         logger.info(f"Generated {class_name}{ext} ({target_tool}) — {len(elements)} elements")
+
+    # Persist name registry so subsequent runs reuse the same names
+    _save_name_registry(registry_path, name_registry)
 
     # Patch className back into graph for dashboard display
     node_to_class = {w["node_id"]: w["class"] for w in written}
@@ -1014,3 +1047,77 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
 
     validation_failures = validate_all(written) if target_tool == "selenium-java" else {}
     return {"written": written, "count": len(written), "validation_failures": validation_failures}
+
+
+def update_incrementally_v2(diff_report_path: str, graph_path: str, output_dir: str,
+                            target_tool: str) -> dict:
+    """Regenerate only pages that have added or renamed elements; leave others untouched."""
+    if target_tool not in _GENERATORS:
+        target_tool = "selenium-java"
+
+    with open(diff_report_path) as f:
+        diff = json.load(f)
+    with open(graph_path) as f:
+        graph = json.load(f)
+
+    registry_path = os.path.join(os.path.dirname(graph_path), "name_registry.json")
+    name_registry = _load_name_registry(registry_path)
+
+    generate_fn, ext = _GENERATORS[target_tool]
+    nodes_iter = _nodes_iter_from_graph(graph)
+
+    # Collect selectorKeys that changed
+    changed_sks: set[str] = set()
+    for item in diff.get("added", []):
+        changed_sks.add(item.get("selectorKey", ""))
+    for item in diff.get("renamed", []):
+        changed_sks.add(item.get("oldSelectorKey", ""))
+
+    if not changed_sks:
+        logger.info("update_incrementally_v2: no added/renamed elements — nothing to regenerate")
+        return {"written": [], "count": 0}
+
+    # Map changed selectorKeys → node_ids that own them
+    changed_node_ids: set[str] = set()
+    for node_id, node in nodes_iter:
+        for elem in node.get("elements", []):
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            if sk in changed_sks:
+                changed_node_ids.add(node_id)
+
+    os.makedirs(output_dir, exist_ok=True)
+    written = []
+    seen_classes: set[str] = set()
+
+    for node_id, node in nodes_iter:
+        if node_id not in changed_node_ids:
+            continue
+        elements = node.get("elements", [])
+        if not elements:
+            continue
+
+        raw_ref = node.get("pageRef") or ""
+        class_name = _pascal(raw_ref) if raw_ref else _class_name_from_node(node)
+        if class_name in seen_classes:
+            suffix = node_id[-4:]
+            class_name = class_name[:-4] + suffix.capitalize() + "Page"
+        seen_classes.add(class_name)
+
+        content = generate_fn(node, node_id, graph, class_name, name_registry)
+        file_path = os.path.join(output_dir, f"{class_name}{ext}")
+        with open(file_path, "w") as f:
+            f.write(content)
+        written.append({"class": class_name, "path": file_path, "node_id": node_id})
+        logger.info(f"Incremental regen: {class_name}{ext} ({len(elements)} elements, {target_tool})")
+
+    _save_name_registry(registry_path, name_registry)
+
+    # Patch className back into graph
+    node_to_class = {w["node_id"]: w["class"] for w in written}
+    for node_id, node in nodes_iter:
+        if node_id in node_to_class:
+            node["className"] = node_to_class[node_id]
+    with open(graph_path, "w") as f:
+        json.dump(graph, f, indent=2)
+
+    return {"written": written, "count": len(written)}

@@ -17,7 +17,9 @@ const PORT          = parseInt(process.env.FLOW_CRAWLER_PORT || '8006', 10)
 const GENERATOR_URL = process.env.GENERATOR_URL || 'http://localhost:8002'
 const _jobs = new Map<string, JobRecord>()
 
-async function notifyGenerator(appId: string, jobId: string, frameworkDir: string, targetTool: string): Promise<void> {
+async function notifyGenerator(
+  appId: string, jobId: string, frameworkDir: string, targetTool: string, triggerType: 'INITIAL' | 'INCREMENTAL'
+): Promise<void> {
   try {
     const VALID_TOOLS = ['selenium-java','selenium-csharp','selenium-python','playwright-js','playwright-ts','playwright-python','cypress-js','cypress-ts']
     const resolvedTool = VALID_TOOLS.includes(targetTool) ? targetTool : 'selenium-java'
@@ -25,10 +27,16 @@ async function notifyGenerator(appId: string, jobId: string, frameworkDir: strin
     await fetch(endpoint, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ app_id: appId, build_id: jobId, framework_dir: frameworkDir, target_tool: resolvedTool }),
+      body:    JSON.stringify({
+        app_id:       appId,
+        build_id:     jobId,
+        framework_dir: frameworkDir,
+        target_tool:  resolvedTool,
+        trigger_type: triggerType,
+      }),
       signal:  AbortSignal.timeout(10000),
     })
-    log.info('GENERATOR', `Notified generator for app_id=${appId}  target_tool=${targetTool || 'default'}`)
+    log.info('GENERATOR', `Notified generator for app_id=${appId}  target_tool=${resolvedTool}  trigger_type=${triggerType}`)
   } catch (err: any) {
     log.warn('GENERATOR', `Generator notification failed: ${err.message}`)
   }
@@ -40,6 +48,11 @@ async function runJob(jobId: string, payload: ReturnType<typeof RequestPayloadSc
 
   try {
     const outputDir = resolveOutputDir(payload.output_dir)
+
+    // Detect before the crawl whether a previous graph exists — used to pick trigger_type
+    const existingGraphPath = path.join(outputDir, payload.app_id, 'graph.json')
+    const isFirstRun = !fs.existsSync(existingGraphPath)
+
     // Load static config from crawler.config.json for LLM provider/model settings
     let fileConfig: Record<string, any> = {}
     try {
@@ -76,7 +89,10 @@ async function runJob(jobId: string, payload: ReturnType<typeof RequestPayloadSc
     job.summary         = result.summary
     log.success('JOB', `${jobId} complete — nodes: ${result.nodeCount}  edges: ${result.edgeCount}`)
 
-    await notifyGenerator(payload.app_id, jobId, payload.framework_dir ?? '', payload.target_tool ?? '')
+    await notifyGenerator(
+      payload.app_id, jobId, payload.framework_dir ?? '', payload.target_tool ?? '',
+      isFirstRun ? 'INITIAL' : 'INCREMENTAL'
+    )
   } catch (err: any) {
     job.status      = 'FAILED'
     job.finished_at = new Date().toISOString()

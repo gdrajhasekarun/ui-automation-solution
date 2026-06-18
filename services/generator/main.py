@@ -9,7 +9,7 @@ from fastapi import BackgroundTasks, FastAPI
 
 from config import DASHBOARD_URL, JAVA_DIR, PORT, REPO_ROOT, SHARED_DIR
 from pom_generator import generate_all
-from pom_generator_v2 import generate_all_v2, output_subdir, file_extension
+from pom_generator_v2 import generate_all_v2, update_incrementally_v2, output_subdir, file_extension
 from pom_registry import generate_registry
 from pom_updater import update_incrementally
 from reconciler import run as reconciler_run
@@ -49,7 +49,7 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
         pass
 
 
-async def _run_generation_v2(job_id: str, app_id: str, _trigger_type: str, framework_dir: str, target_tool: str):
+async def _run_generation_v2(job_id: str, app_id: str, trigger_type: str, framework_dir: str, target_tool: str):
     _jobs[job_id]["status"] = "running"
     try:
         await _notify(app_id, "GENERATOR", f"Generator v2 activated — {target_tool} for {app_id}")
@@ -58,10 +58,15 @@ async def _run_generation_v2(job_id: str, app_id: str, _trigger_type: str, frame
         base_dir = raw_dir if os.path.isabs(raw_dir) else os.path.join(REPO_ROOT, raw_dir.lstrip("./\\"))
         out_dir = os.path.join(SHARED_DIR, "outputs", app_id)
         graph_path = os.path.join(out_dir, "graph.json")
+        diff_path = os.path.join(out_dir, "diff_report.json")
         pages_dir = os.path.join(base_dir, output_subdir(target_tool))
         logger.info(f"v2 generator — tool={target_tool} framework_dir='{framework_dir}' → pages_dir='{pages_dir}'")
 
-        result = generate_all_v2(graph_path, pages_dir, target_tool)
+        if trigger_type != "INITIAL" and os.path.exists(diff_path):
+            await _notify(app_id, "GENERATOR", "Incremental mode — regenerating only changed pages")
+            result = update_incrementally_v2(diff_path, graph_path, pages_dir, target_tool)
+        else:
+            result = generate_all_v2(graph_path, pages_dir, target_tool)
         _jobs[job_id]["classes_written"] = result.get("count", 0)
 
         validation_failures: dict = result.get("validation_failures", {})
