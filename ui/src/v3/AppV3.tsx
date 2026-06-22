@@ -667,6 +667,82 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
         )}
       </div>
 
+      {/* ── Eval panel ── */}
+      {!!meta?.eval && (() => {
+        const ev = meta.eval as {
+          score: number; grade: string; evaluatedAt?: string
+          dimensions: Record<string, { score: number; notes: string }>
+          specQuality: { score: number; notes: string; recommendation: string } | null
+          flags: string[]
+        }
+        const gradeColor = ev.grade === 'A' ? C.green : ev.grade === 'B' ? C.blue : ev.grade === 'C' ? C.amber : C.red
+        const dimKeys: Array<[string, string]> = [
+          ['coverage',            'Coverage'],
+          ['interactionAccuracy', 'Interaction'],
+          ['graphQuality',        'Graph Quality'],
+          ['routePrediction',     'Route Predict'],
+        ]
+        const recColor = (r: string) => r === 'ready' ? C.green : r === 'review_required' ? C.amber : C.red
+        const flagColor = (f: string) => f.startsWith('ERROR') ? C.red : f.startsWith('WARN') ? C.amber : C.muted
+        return (
+          <div style={{ marginBottom: 16, flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ ...MONO, fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Crawl Eval</span>
+              {ev.evaluatedAt && (
+                <span style={{ ...MONO, fontSize: 10, color: C.muted }}>
+                  · {new Date(ev.evaluatedAt).toLocaleString()}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {/* Overall score */}
+              <div style={{ background: C.surface2, border: `1px solid ${gradeColor}55`, borderRadius: 8, padding: '10px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80 }}>
+                <span style={{ ...MONO, fontSize: 22, fontWeight: 700, color: gradeColor }}>{ev.grade}</span>
+                <span style={{ ...MONO, fontSize: 12, color: C.text }}>{ev.score}/100</span>
+              </div>
+              {/* Dimension scores */}
+              {dimKeys.map(([key, label]) => {
+                const dim = ev.dimensions[key]
+                if (!dim) return null
+                const c = dim.score >= 90 ? C.green : dim.score >= 70 ? C.amber : C.red
+                return (
+                  <Tooltip key={key} title={dim.notes}>
+                    <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 14px', cursor: 'help', minWidth: 90 }}>
+                      <div style={{ ...MONO, fontSize: 10, color: C.muted, marginBottom: 3 }}>{label}</div>
+                      <div style={{ ...MONO, fontSize: 16, fontWeight: 600, color: c }}>{dim.score}<span style={{ fontSize: 10, color: C.muted }}>/100</span></div>
+                    </div>
+                  </Tooltip>
+                )
+              })}
+              {/* Spec quality */}
+              {ev.specQuality && (
+                <Tooltip title={ev.specQuality.notes}>
+                  <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 14px', cursor: 'help', minWidth: 90 }}>
+                    <div style={{ ...MONO, fontSize: 10, color: C.muted, marginBottom: 3 }}>Spec Quality</div>
+                    <div style={{ ...MONO, fontSize: 16, fontWeight: 600, color: recColor(ev.specQuality.recommendation) }}>
+                      {ev.specQuality.score}<span style={{ fontSize: 10, color: C.muted }}>/100</span>
+                    </div>
+                    <div style={{ ...MONO, fontSize: 9, color: recColor(ev.specQuality.recommendation), marginTop: 2 }}>
+                      {ev.specQuality.recommendation.replace('_', ' ')}
+                    </div>
+                  </div>
+                </Tooltip>
+              )}
+              {/* Flags */}
+              {ev.flags.length > 0 && (
+                <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 14px', maxWidth: 340, overflow: 'hidden' }}>
+                  <div style={{ ...MONO, fontSize: 10, color: C.muted, marginBottom: 4 }}>{ev.flags.length} flag{ev.flags.length !== 1 ? 's' : ''}</div>
+                  {ev.flags.slice(0, 4).map((f, i) => (
+                    <div key={i} style={{ ...MONO, fontSize: 10, color: flagColor(f), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.7 }}>{f}</div>
+                  ))}
+                  {ev.flags.length > 4 && <div style={{ ...MONO, fontSize: 10, color: C.muted }}>+{ev.flags.length - 4} more…</div>}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Graph view fills remaining height */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {loading && !graph ? (

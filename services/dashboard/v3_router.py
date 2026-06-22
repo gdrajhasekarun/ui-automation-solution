@@ -340,6 +340,7 @@ def _normalize_v3_graph(raw: dict) -> dict:
         "appId":      raw_meta.get("appId") or raw_meta.get("seedUrl", ""),
         "summary":    raw_meta.get("summary", ""),
         "unfilledFields": raw_meta.get("unfilledFields", 0),
+        "eval":       raw_meta.get("eval"),
     }
 
     return {"nodes": nodes, "edges": edges, "meta": meta}
