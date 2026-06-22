@@ -113,13 +113,24 @@ async def v3_ai_crawl_status(crawl_job_id: str):
                     "node_count":  data.get("node_count", 0),
                     "edge_count":  data.get("edge_count", 0),
                 })
+                app_id = data.get("app_id", "")
+                crawl_status = data.get("status")
                 db_emit_event(
-                    data.get("app_id", ""),
+                    app_id,
                     "CRAWL_AI",
-                    f"Crawl {data.get('status')} — "
+                    f"Crawl {crawl_status} — "
                     f"{data.get('node_count', 0)} nodes, {data.get('edge_count', 0)} edges",
-                    "INFO" if data.get("status") == "COMPLETE" else "ERROR",
+                    "INFO" if crawl_status == "COMPLETE" else "ERROR",
                 )
+                if crawl_status == "COMPLETE" and data.get("eval_grade"):
+                    score = data.get("eval_score", "?")
+                    grade = data.get("eval_grade", "?")
+                    spec  = data.get("spec_quality_recommendation", "")
+                    level = "SUCCESS" if grade in ("A", "B") else "WARN" if grade in ("C", "D") else "ERROR"
+                    db_emit_event(app_id, "CRAWL_AI", f"Eval — score: {score}/100  grade: {grade}", level)
+                    if spec:
+                        spec_level = "SUCCESS" if spec == "ready" else "WARN" if spec == "review_required" else "ERROR"
+                        db_emit_event(app_id, "CRAWL_AI", f"Spec quality: {spec}", spec_level)
         return data
     except Exception as e:
         return JSONResponse(status_code=503, content={"status": "UNKNOWN", "detail": str(e)})

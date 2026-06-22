@@ -78,15 +78,18 @@ async function runJob(jobId: string, payload: ReturnType<typeof RequestPayloadSc
 
     const result = await runCrawl(config, payload)
 
-    job.status          = 'COMPLETE'
-    job.finished_at     = new Date().toISOString()
-    job.node_count      = result.nodeCount
-    job.edge_count      = result.edgeCount
-    job.unfilled_fields = result.unfilledFields
-    job.llm_call_count  = result.llmCallCount
-    job.cache_hit_count = result.cacheHitCount
-    job.output_file     = result.outputFile
-    job.summary         = result.summary
+    job.status                     = 'COMPLETE'
+    job.finished_at                = new Date().toISOString()
+    job.node_count                 = result.nodeCount
+    job.edge_count                 = result.edgeCount
+    job.unfilled_fields            = result.unfilledFields
+    job.llm_call_count             = result.llmCallCount
+    job.cache_hit_count            = result.cacheHitCount
+    job.output_file                = result.outputFile
+    job.summary                    = result.summary
+    job.eval_score                 = result.evalScore
+    job.eval_grade                 = result.evalGrade
+    job.spec_quality_recommendation = result.specQualityRecommendation
     log.success('JOB', `${jobId} complete — nodes: ${result.nodeCount}  edges: ${result.edgeCount}`)
 
     await notifyGenerator(

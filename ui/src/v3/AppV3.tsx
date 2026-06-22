@@ -8,7 +8,6 @@ import {
   CloseCircleOutlined, DatabaseOutlined, NodeIndexOutlined,
   PlayCircleOutlined, RocketOutlined, SyncOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
-import { Link } from 'react-router-dom'
 import { ThemeContext, DARK, LIGHT } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
 import { setAppId, setAppUrl, setFrameworkDir, setTargetTool, toggleTheme, bumpKbRefresh } from '../store/appSlice'
@@ -391,6 +390,26 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
                   <span style={{ color: C.amber }}>{String(jobStatus.unfilled_fields)}</span>
                 </Descriptions.Item>
               )}
+              {jobDone && jobStatus?.eval_score !== undefined && (
+                <Descriptions.Item label="Eval">
+                  <span style={{ color: jobStatus.eval_score >= 90 ? C.green : jobStatus.eval_score >= 70 ? C.amber : C.red, fontWeight: 600 }}>
+                    {String(jobStatus.eval_score)}/100
+                  </span>
+                  {jobStatus.eval_grade && (
+                    <span style={{ marginLeft: 6, color: C.muted }}>Grade {jobStatus.eval_grade}</span>
+                  )}
+                </Descriptions.Item>
+              )}
+              {jobDone && jobStatus?.spec_quality_recommendation && (
+                <Descriptions.Item label="Spec Quality">
+                  {(() => {
+                    const rec = jobStatus.spec_quality_recommendation
+                    const color = rec === 'ready' ? C.green : rec === 'review_required' ? C.amber : C.red
+                    const label = rec === 'ready' ? 'Ready' : rec === 'review_required' ? 'Review required' : 'Recrawl recommended'
+                    return <span style={{ color, fontWeight: 600 }}>{label}</span>
+                  })()}
+                </Descriptions.Item>
+              )}
               {jobStatus?.summary && (
                 <Descriptions.Item label="Summary">
                   <span style={{ fontSize: 10, color: C.muted }}>{jobStatus.summary}</span>
@@ -738,7 +757,7 @@ export default function AppV3() {
             <span style={{ ...MONO, fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: 'nowrap' }}>
               AI Test Automation
             </span>
-            <Tag color="purple" style={{ ...MONO, fontSize: 11, margin: 0 }}>V3 · Graph Crawler</Tag>
+            <Tag color="purple" style={{ ...MONO, fontSize: 11, margin: 0 }}>Graph Crawler</Tag>
 
             {/* Tab bar */}
             <div style={{ flex: 1, overflow: 'hidden' }}>
@@ -766,12 +785,6 @@ export default function AppV3() {
                   {health?.status ?? '…'}
                 </span>
               </Space>
-            </Tooltip>
-
-            <Divider type="vertical" style={{ borderColor: C.border, margin: '0 4px' }} />
-
-            <Tooltip title="Switch to V2">
-              <Link to="/v2" style={{ ...MONO, fontSize: 11, color: C.muted, flexShrink: 0 }}>← V2</Link>
             </Tooltip>
 
             <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>

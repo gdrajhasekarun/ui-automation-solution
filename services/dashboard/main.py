@@ -17,7 +17,6 @@ from db import (db_emit_event, db_get, db_insert, db_list, db_list_after_rowid,
                 db_list_since, db_rowid_before_since, db_update)
 from models import (CrawlTriggerBody, EventBody, ExecuteResultsBody,
                     ExecuteRunBody, PlanRunBody)
-from v2_router import router as v2_router
 from v3_router import router as v3_router
 from v3_ai_router import router as v3_ai_router
 
@@ -43,7 +42,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.include_router(v2_router)
 app.include_router(v3_router)
 app.include_router(v3_ai_router)
 
@@ -143,20 +141,10 @@ async def crawl_trigger(body: CrawlTriggerBody):
 
 @app.post("/api/pom/trigger")
 async def pom_trigger(body: dict):
+    """Generator — supports target_tool: selenium-java|selenium-csharp|playwright-js|playwright-ts"""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{GENERATOR_URL}/trigger", json=body)
-            return resp.json()
-    except Exception as e:
-        return {"status": "ERROR", "detail": str(e)}
-
-
-@app.post("/api/v2/pom/trigger")
-async def pom_trigger_v2(body: dict):
-    """Generator v2 — supports target_tool: selenium-java|selenium-csharp|playwright-js|playwright-ts"""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{GENERATOR_URL}/v2/trigger", json=body)
             return resp.json()
     except Exception as e:
         return {"status": "ERROR", "detail": str(e)}

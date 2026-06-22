@@ -28,18 +28,21 @@ export interface V3CrawlTriggerResp {
 }
 
 export interface V3JobStatus {
-  status:          string   // STARTED | RUNNING | COMPLETE | FAILED
-  app_id?:         string
-  seed_url?:       string
-  started_at?:     string
-  finished_at?:    string
-  node_count?:     number
-  edge_count?:     number
-  unfilled_fields?: number
-  output_files?:   string[]
-  summary?:        string
-  error?:          string
-  [key: string]:   unknown
+  status:                      string   // STARTED | RUNNING | COMPLETE | FAILED
+  app_id?:                     string
+  seed_url?:                   string
+  started_at?:                 string
+  finished_at?:                string
+  node_count?:                 number
+  edge_count?:                 number
+  unfilled_fields?:            number
+  output_files?:               string[]
+  summary?:                    string
+  error?:                      string
+  eval_score?:                 number
+  eval_grade?:                 string
+  spec_quality_recommendation?: string
+  [key: string]:               unknown
 }
 
 export interface V3GraphElement {

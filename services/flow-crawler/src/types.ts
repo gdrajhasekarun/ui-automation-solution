@@ -26,6 +26,16 @@ export const UILibrarySchema = z.enum([
 ])
 export type UILibrary = z.infer<typeof UILibrarySchema>
 
+// ── Spec (page intent + element description) ───────────────────────────────────
+export const SpecSchema = z.object({
+  intent:      z.string().optional(),
+  description: z.string().optional(),
+  userEdited:  z.boolean().default(false),
+  confidence:  z.number().min(0).max(1).optional(),
+  generatedAt: z.string().optional(),
+})
+export type Spec = z.infer<typeof SpecSchema>
+
 // ── Element capture ────────────────────────────────────────────────────────────
 export const ElementTypeSchema = z.enum([
   'textbox', 'textarea', 'radio', 'checkbox', 'button',
@@ -58,6 +68,7 @@ export const CapturedElementSchema = z.object({
   fillConfidence:   z.number().nullable(),
   href:             z.string().nullable().optional(),
   inputType:        z.string().nullable().optional(),
+  spec:             SpecSchema.optional(),
   // Internal — not serialised to graph
   _selector:        z.string().optional(),
   _resolvedValue:   z.string().nullable().optional(),
@@ -140,6 +151,7 @@ export const NodeSchema = z.object({
   elements:       z.array(CapturedElementSchema),
   unfilledFields: z.array(UnfilledFieldSchema).default([]),
   screenshotPath: z.string().optional(),
+  spec:           SpecSchema.optional(),
 })
 export type Node = z.infer<typeof NodeSchema>
 
@@ -159,20 +171,99 @@ export const EdgeSchema = z.object({
 })
 export type Edge = z.infer<typeof EdgeSchema>
 
+export const EvalDimensionSchema = z.object({
+  score: z.number().min(0).max(100),
+  notes: z.string(),
+})
+export type EvalDimension = z.infer<typeof EvalDimensionSchema>
+
+export const SpecQualitySchema = z.object({
+  score:          z.number().min(0).max(100),
+  notes:          z.string(),
+  recommendation: z.enum(['ready', 'review_required', 'recrawl_recommended']),
+})
+export type SpecQuality = z.infer<typeof SpecQualitySchema>
+
+export const EvalSchema = z.object({
+  score:   z.number().min(0).max(100),
+  grade:   z.enum(['A', 'B', 'C', 'D', 'F']),
+  dimensions: z.object({
+    coverage:            EvalDimensionSchema,
+    interactionAccuracy: EvalDimensionSchema,
+    graphQuality:        EvalDimensionSchema,
+    routePrediction:     EvalDimensionSchema,
+  }),
+  specQuality:  SpecQualitySchema.nullable(),
+  flags:        z.array(z.string()),
+  evaluatedAt:  z.string(),
+})
+export type Eval = z.infer<typeof EvalSchema>
+
+export const PredictedRouteStepSchema = z.object({
+  nodeId:    z.string(),
+  elementId: z.string(),
+  action:    z.enum(['fill', 'click', 'select', 'skip']),
+  valueHint: z.string().optional(),
+})
+export type PredictedRouteStep = z.infer<typeof PredictedRouteStepSchema>
+
+export const PredictedRouteSchema = z.object({
+  routeId:     z.string(),
+  description: z.string(),
+  confidence:  z.number().min(0).max(1),
+  steps:       z.array(PredictedRouteStepSchema),
+  expectedNewNode: z.object({
+    urlPattern:  z.string().optional(),
+    intentHint:  z.string().optional(),
+  }).optional(),
+})
+export type PredictedRoute = z.infer<typeof PredictedRouteSchema>
+
+export const RoutePredictionSchema = z.object({
+  routes: z.array(PredictedRouteSchema),
+})
+
+export const PageAnnotationSchema = z.object({
+  nodeId:   z.string(),
+  intent:   z.string(),
+  elements: z.array(z.object({
+    elementId:   z.string(),
+    description: z.string(),
+  })),
+})
+
+export const AnnotationBatchSchema = z.object({
+  pages: z.array(PageAnnotationSchema),
+})
+
 export const GraphSchema = z.object({
   meta: z.object({
-    crawledAt:      z.string(),
-    seedUrl:        z.string(),
-    appId:          z.string(),
-    flowName:       z.string().optional(),
-    uiLibrary:      UILibrarySchema,
-    totalNodes:     z.number(),
-    totalEdges:     z.number(),
-    unfilledFields: z.number(),
-    llmCallCount:   z.number(),
-    cacheHitCount:  z.number(),
-    summary:        z.string().optional(),
-    source:         z.literal('flow-crawler'),
+    crawledAt:             z.string(),
+    seedUrl:               z.string(),
+    appId:                 z.string(),
+    flowName:              z.string().optional(),
+    uiLibrary:             UILibrarySchema,
+    totalNodes:            z.number(),
+    totalEdges:            z.number(),
+    unfilledFields:        z.number(),
+    llmCallCount:          z.number(),
+    cacheHitCount:         z.number(),
+    summary:               z.string().optional(),
+    source:                z.literal('flow-crawler'),
+    totalPredictedRoutes:  z.number().optional(),
+    confirmedPredictions:  z.number().optional(),
+    crawlErrors:           z.number().optional(),
+    annotatedAt:           z.string().optional(),
+    aliases:               z.record(z.string()).optional(),
+    diff: z.object({
+      newNodes:     z.array(z.string()),
+      removedNodes: z.array(z.string()),
+      changedNodes: z.array(z.string()),
+      newEdges:     z.array(z.string()),
+      removedEdges: z.array(z.string()),
+      unchanged:    z.number(),
+    }).optional(),
+    eval: EvalSchema.optional(),
   }),
   nodes: z.record(z.string(), NodeSchema),
   edges: z.array(EdgeSchema),
@@ -220,6 +311,8 @@ export const CrawlerConfigSchema = z.object({
   headless:  z.boolean().default(true),
   maxDepth:  z.number().default(10),
   maxPages:  z.number().default(60),
+  annotate:               z.boolean().default(true),
+  routePredictionEnabled: z.boolean().default(true),
   llm: z.object({
     enabled:             z.boolean().default(true),
     smartProvider:       LLMProviderSchema.default('openai'),
@@ -236,17 +329,20 @@ export type CrawlerConfig = z.infer<typeof CrawlerConfigSchema>
 
 // ── Job record ─────────────────────────────────────────────────────────────────
 export interface JobRecord {
-  status:          'STARTED' | 'RUNNING' | 'COMPLETE' | 'FAILED'
-  app_id:          string
-  seed_url:        string
-  started_at:      string
-  finished_at?:    string
-  node_count?:     number
-  edge_count?:     number
-  unfilled_fields?: number
-  llm_call_count?: number
-  cache_hit_count?: number
-  output_file?:    string
-  error?:          string
-  summary?:        string
+  status:                    'STARTED' | 'RUNNING' | 'COMPLETE' | 'FAILED'
+  app_id:                    string
+  seed_url:                  string
+  started_at:                string
+  finished_at?:              string
+  node_count?:               number
+  edge_count?:               number
+  unfilled_fields?:          number
+  llm_call_count?:           number
+  cache_hit_count?:          number
+  output_file?:              string
+  error?:                    string
+  summary?:                  string
+  eval_score?:               number
+  eval_grade?:               string
+  spec_quality_recommendation?: string
 }

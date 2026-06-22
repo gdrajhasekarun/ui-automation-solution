@@ -8,7 +8,7 @@ import { capturePageElements, detectUILibrary, findNewElements, cleanupCrawlerAt
 import { dispatch, safeClick, waitForIdle } from '../interaction/index.js'
 import { recordEdge, captureNewTab } from '../navigation/index.js'
 import { resolveValue } from '../data/index.js'
-import { filterElements, pickNextAction, namePageRef } from '../llm/index.js'
+import { filterElements, pickNextAction, namePageRef, predictRoutes } from '../llm/index.js'
 import { CrawlDataCache } from '../cache/index.js'
 import { BranchQueue } from './branchQueue.js'
 import { PathManager } from './pathManager.js'
@@ -505,6 +505,24 @@ export async function runFromPage(
       if (result.newElements.length > 0) {
         interactionQueue.unshift(...result.newElements)
       }
+    }
+  }
+
+  // Route prediction at dead end — fires for both BFS and focused-flow modes
+  if (config.routePredictionEnabled !== false && ctx.smartLLM && graph.nodeCount < config.maxPages) {
+    try {
+      const predictions = await predictRoutes({
+        currentGraph:  graph.toJSON(),
+        alreadyWalked: ctx.pathManager.getCompletedPaths(),
+        maxRoutes:     5,
+      }, ctx.smartLLM)
+      if (predictions.length > 0) {
+        log.info('PREDICT', `${predictions.length} route(s) predicted — queuing`)
+        for (const route of predictions) ctx.branchQueue.addPredicted(route)
+        graph.incrementPredictedRoutes(predictions.length)
+      }
+    } catch (err: any) {
+      log.warn('PREDICT', `Route prediction failed: ${err.message}`)
     }
   }
 

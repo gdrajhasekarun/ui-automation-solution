@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import type { Node, Edge, Graph, UILibrary, CapturedElement } from '../types.js'
+import type { Node, Edge, Graph, UILibrary, CapturedElement, Eval } from '../types.js'
 import { edgeId, nodeId, normalizeUrl } from './urlNormalizer.js'
 
 // ── Branch condition inference ─────────────────────────────────────────────────
@@ -65,6 +65,11 @@ export class CrawlerGraph {
   private _llmCallCount = 0
   private _cacheHitCount = 0
   private _summary?: string
+  private _eval?: Eval
+  private _totalPredictedRoutes = 0
+  private _confirmedPredictions = 0
+  private _crawlErrors = 0
+  private _annotatedAt?: string
 
   private pageRefNames = new Set<string>()
 
@@ -180,6 +185,11 @@ export class CrawlerGraph {
   incrementLLMCalls(n = 1) { this._llmCallCount += n }
   incrementCacheHits(n = 1) { this._cacheHitCount += n }
   setSummary(s: string) { this._summary = s }
+  setEval(result: Eval): void { this._eval = result }
+  incrementPredictedRoutes(n: number): void { this._totalPredictedRoutes += n }
+  incrementConfirmedPredictions(): void { this._confirmedPredictions++ }
+  recordCrawlError(): void { this._crawlErrors++ }
+  setAnnotatedAt(ts: string): void { this._annotatedAt = ts }
 
   get nodeCount() { return this.nodes.size }
   get edgeCount()  { return this.edges.length }
@@ -217,34 +227,49 @@ export class CrawlerGraph {
         unfilledFields: this.unfilledCount,
         llmCallCount:   this._llmCallCount,
         cacheHitCount:  this._cacheHitCount,
-        summary:        this._summary,
-        source:         'flow-crawler',
+        summary:               this._summary,
+        source:                'flow-crawler',
+        totalPredictedRoutes:  this._totalPredictedRoutes || undefined,
+        confirmedPredictions:  this._confirmedPredictions || undefined,
+        crawlErrors:           this._crawlErrors || undefined,
+        annotatedAt:           this._annotatedAt,
+        eval:                  this._eval,
       },
       nodes: Object.fromEntries(this.nodes),
       edges: this.edges,
     }
   }
 
-  /** Merge nodes whose distinctive elements are ≥80% similar (Jaccard) AND whose outgoing-edge
+  /** Merge nodes whose distinctive elements are similar (Jaccard) AND whose outgoing-edge
    *  trigger sets overlap sufficiently. Handles two cases:
    *    1. Same page reachable via two different URLs (fingerprint identical → Jaccard = 1.0)
-   *    2. Same page captured with slightly different element counts across runs (Jaccard ≥ 0.8)
+   *    2. Same page captured with slightly different element counts across runs or auth states
    *  Called before writeToFile so the output graph has no duplicate page nodes. */
   consolidateDuplicates(): void {
-    // Nav boilerplate that appears on every page — excluded from similarity so shared chrome
-    // doesn't falsely match unrelated pages.
-    const NAV_BOILERPLATE = new Set([
-      'home', 'login', 'logout', 'make appointment', 'profile', 'history',
-      'back', 'close', 'cancel', 'info@katalon.com', 'sign in', 'sign out',
-    ])
+    const allNodes = [...this.nodes.values()]
+    const totalNodes = allNodes.length
 
-    // Distinctive selector set for a node: exclude nav boilerplate labels
+    // Build selector frequency map: how many nodes contain each selector.
+    // Selectors appearing on >40% of pages are structural boilerplate (nav/header/footer)
+    // and should not influence page-identity comparisons.
+    const selectorFreq = new Map<string, number>()
+    for (const node of allNodes) {
+      const seen = new Set<string>()
+      for (const el of node.elements ?? []) {
+        if (el._selector && !seen.has(el._selector)) {
+          seen.add(el._selector)
+          selectorFreq.set(el._selector, (selectorFreq.get(el._selector) ?? 0) + 1)
+        }
+      }
+    }
+    const BOILERPLATE_THRESHOLD = Math.max(2, totalNodes * 0.4)
+    const isBoilerplate = (sel: string) => (selectorFreq.get(sel) ?? 0) >= BOILERPLATE_THRESHOLD
+
+    // Distinctive selector set for a node: exclude high-frequency boilerplate
     const distinctiveSelectors = (node: Node): Set<string> => {
       const result = new Set<string>()
       for (const el of node.elements ?? []) {
-        const label = el.name?.trim().toLowerCase() ?? ''
-        if (NAV_BOILERPLATE.has(label)) continue
-        if (el._selector) result.add(el._selector)
+        if (el._selector && !isBoilerplate(el._selector)) result.add(el._selector)
       }
       return result
     }
@@ -278,11 +303,16 @@ export class CrawlerGraph {
         const nodeB = this.nodes.get(idB)!
         const selB  = distinctiveSelectors(nodeB)
 
-        // Both pages have no distinctive elements (pure nav pages) — don't merge
-        if (selA.size === 0 && selB.size === 0) continue
-
-        const elemSim = jaccard(selA, selB)
-        if (elemSim < 0.8) continue   // not similar enough
+        // Same normalizedUrl (hash preserved) = definitively the same page in a different
+        // session/auth state. Always merge — no Jaccard check needed.
+        // For different URLs, require strong structural similarity (0.8).
+        const sameUrl = nodeA.normalizedUrl === nodeB.normalizedUrl
+        if (!sameUrl) {
+          // Both pages have no distinctive elements (pure nav pages) — don't merge
+          if (selA.size === 0 && selB.size === 0) continue
+          const elemSim = jaccard(selA, selB)
+          if (elemSim < 0.8) continue
+        }
 
         // Check that outgoing trigger sets are also compatible (one is subset of the other
         // or they overlap enough — the larger capture subsumes the smaller)

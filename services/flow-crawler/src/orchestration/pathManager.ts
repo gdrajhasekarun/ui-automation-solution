@@ -4,6 +4,7 @@ import type { PathStep } from '../types.js'
 export class PathManager {
   private activePath: PathStep[] = []
   private completedPaths = new Set<string>()
+  private _completedPathSteps: Array<{ pathId: string; steps: PathStep[] }> = []
 
   push(step: PathStep): void {
     this.activePath.push(step)
@@ -21,7 +22,13 @@ export class PathManager {
   }
 
   markComplete(): void {
-    this.completedPaths.add(this.pathId())
+    const id = this.pathId()
+    this.completedPaths.add(id)
+    this._completedPathSteps.push({ pathId: id, steps: this.getActivePath() })
+  }
+
+  getCompletedPaths(): Array<{ pathId: string; steps: PathStep[] }> {
+    return [...this._completedPathSteps]
   }
 
   isComplete(pathId: string): boolean {

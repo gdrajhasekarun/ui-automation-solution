@@ -974,6 +974,68 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str,
     )
 
 
+# ── Reconciliation helpers ────────────────────────────────────────────────────
+
+def _find_existing_file_for_node(output_dir: str, ext: str, elem_consts: list) -> str | None:
+    """Return path of an existing file that already covers ≥50% of the node's locator values."""
+    if not elem_consts or not os.path.isdir(output_dir):
+        return None
+    new_locs = {loc_val for _, _, loc_val, _ in elem_consts if loc_val}
+    if not new_locs:
+        return None
+    best_file, best_overlap = None, 0
+    for fname in os.listdir(output_dir):
+        if not fname.endswith(ext):
+            continue
+        fpath = os.path.join(output_dir, fname)
+        try:
+            content = open(fpath).read()
+        except Exception:
+            continue
+        overlap = sum(1 for v in new_locs if v in content)
+        if overlap / len(new_locs) >= 0.5 and overlap > best_overlap:
+            best_overlap, best_file = overlap, fpath
+    return best_file
+
+
+def _merge_into_existing_java(existing_path: str, new_content: str) -> None:
+    """Inject constants and methods from new_content that are absent from existing_path."""
+    with open(existing_path) as f:
+        existing = f.read()
+
+    # Constants: lines like "    private static final Locator X = ..."
+    new_consts = re.findall(r'    private static final Locator [^\n]+;', new_content)
+    # Methods: "    public ... { ... }" blocks (non-greedy per method)
+    new_methods = re.findall(r'(    public [^\n]+\{[^}]+\})', new_content, re.DOTALL)
+
+    const_additions, method_additions = [], []
+    for line in new_consts:
+        m = re.search(r'"([^"]+)"', line)
+        if m and m.group(1) not in existing:
+            const_additions.append(line)
+    for block in new_methods:
+        m = re.match(r'    public \w+ (\w+)\(', block)
+        if m and (m.group(1) + '(') not in existing:
+            method_additions.append(block)
+
+    if not const_additions and not method_additions:
+        return
+
+    if const_additions:
+        constructor_m = re.search(r'    public \w+\(WebDriver driver\)', existing)
+        if constructor_m:
+            pos = constructor_m.start()
+            existing = existing[:pos] + '\n'.join(const_additions) + '\n' + existing[pos:]
+
+    if method_additions:
+        last_brace = existing.rfind('\n}')
+        if last_brace >= 0:
+            existing = existing[:last_brace] + '\n\n' + '\n\n'.join(method_additions) + existing[last_brace:]
+
+    with open(existing_path, 'w') as f:
+        f.write(existing)
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 _GENERATORS = {
@@ -1030,6 +1092,19 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
 
         content = generate_fn(node, node_id, graph, class_name, name_registry)
         file_path = os.path.join(output_dir, f"{class_name}{ext}")
+
+        # If the target file doesn't exist yet, check whether another file already
+        # covers the same page (can happen when duplicate nodes from auth-state
+        # variants were merged but the first run had a different class name).
+        if not os.path.exists(file_path) and target_tool == "selenium-java":
+            probe_consts, _ = _extract_elements(node, node_id, graph, {})
+            existing_file = _find_existing_file_for_node(output_dir, ext, probe_consts)
+            if existing_file:
+                _merge_into_existing_java(existing_file, content)
+                logger.info(f"Reconciled {class_name} → {os.path.basename(existing_file)} (merged into existing file)")
+                written.append({"class": class_name, "path": existing_file, "node_id": node_id, "reconciled": True})
+                continue
+
         with open(file_path, "w") as f:
             f.write(content)
         written.append({"class": class_name, "path": file_path, "node_id": node_id})

@@ -3,7 +3,8 @@ import { createHash } from 'crypto'
 export function normalizeUrl(raw: string): string {
   try {
     const u = new URL(raw)
-    u.hash = ''
+    // Preserve hash — SPAs use it as the primary route identifier (e.g. /#/login vs /#/dashboard).
+    // Stripping it would collapse all SPA routes to the same node ID.
     // Sort query params for stable comparison
     const params = Array.from(u.searchParams.entries()).sort(([a], [b]) => a.localeCompare(b))
     u.search = ''
