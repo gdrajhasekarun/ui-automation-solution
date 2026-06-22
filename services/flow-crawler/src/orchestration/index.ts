@@ -163,7 +163,7 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
 
     // Layer 3: eval (always runs — gracefully handles missing data)
     log.info('EVAL', 'Running post-crawl evaluation...')
-    const evalResult = await runEval(graph.toJSON(), smartLLM, previousGraph)
+    const evalResult = await runEval(graph.toJSON(), smartLLM, previousGraph, config.flowName)
     graph.setEval(evalResult)
     evalScore = evalResult.score
     evalGrade = evalResult.grade

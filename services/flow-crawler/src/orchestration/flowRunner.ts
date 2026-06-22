@@ -6,7 +6,7 @@ import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { normalizeUrl, nodeId, pageFingerprint } from '../graph/index.js'
 import { capturePageElements, detectUILibrary, findNewElements, cleanupCrawlerAttrs } from '../capture/index.js'
 import { dispatch, safeClick, waitForIdle } from '../interaction/index.js'
-import { recordEdge, captureNewTab } from '../navigation/index.js'
+import { captureNewTab } from '../navigation/index.js'
 import { resolveValue } from '../data/index.js'
 import { filterElements, pickNextAction, namePageRef, predictRoutes } from '../llm/index.js'
 import { CrawlDataCache } from '../cache/index.js'
@@ -36,6 +36,9 @@ export async function runFromPage(
     phaseBSteps: PathStep[]
     depth: number
     existingNodes: Record<string, Node>
+    // When set, record this edge using the REAL nodeId computed for this page
+    // (avoids broken-edge bug when fingerprint causes a different id than the base URL hash)
+    incomingEdge?: { fromNodeId: string; trigger: import('../types.js').Edge['trigger'] }
   }
 ): Promise<void> {
   if (ctx.depth > config.maxDepth) return
@@ -85,6 +88,13 @@ export async function runFromPage(
     : graph.hasNode(baseId) && graph.getNode(baseId)?.fingerprint !== fp
       ? nodeId(normUrl + '#' + fp.slice(0, 8))
       : baseId
+
+  // Record the incoming edge now that we know the real nodeId for this page.
+  // This is the correct place because recordEdge(toUrl) would compute baseId (URL hash only),
+  // but when fingerprinting creates a different id, the edge target would be wrong.
+  if (ctx.incomingEdge) {
+    graph.addEdge({ from: ctx.incomingEdge.fromNodeId, to: id, trigger: ctx.incomingEdge.trigger })
+  }
 
   log.step('CAPTURE', `[depth:${ctx.depth}] "${title || normUrl}"  library:${library}  elements:${elements.length}  node:${id}`)
 
@@ -329,13 +339,13 @@ export async function runFromPage(
         },
       })
 
-      // Full navigation → recurse into new page
+      // Full navigation → recurse into new page; edge recorded inside runFromPage with the real nodeId
       if (result.navigated && result.toUrl && !isBlocked(result.toUrl)) {
-        recordEdge(graph, currentNodeId, result.toUrl, {
+        const trigger = {
           type: pick.element.elementType === 'link' ? 'link_click' : 'button_click',
           semanticType: 'navigate', elementId: pick.element.id, elementName: pick.element.name || null,
-        })
-        await runFromPage(page, currentNodeId, graph, config, { ...ctx, depth: ctx.depth + 1, phaseBSteps: [] })
+        } as const
+        await runFromPage(page, currentNodeId, graph, config, { ...ctx, depth: ctx.depth + 1, phaseBSteps: [], incomingEdge: { fromNodeId: currentNodeId, trigger } })
         return
       }
 
@@ -486,11 +496,12 @@ export async function runFromPage(
         const triggerType = element.elementType === 'link' ? 'link_click'
           : element.elementType === 'button' ? 'button_click'
           : element.elementType === 'tab'    ? 'tab_click' : 'js_navigation'
-        recordEdge(graph, id, result.toUrl, {
+        // Edge recorded inside runFromPage so it uses the real fingerprint-based nodeId
+        const trigger = {
           type: triggerType, semanticType: 'navigate',
           elementId: element.id, elementName: element.name || null,
-        })
-        await runFromPage(page, id, graph, config, { ...ctx, depth: ctx.depth + 1, phaseBSteps: [] })
+        } as const
+        await runFromPage(page, id, graph, config, { ...ctx, depth: ctx.depth + 1, phaseBSteps: [], incomingEdge: { fromNodeId: id, trigger } })
         return
       }
 

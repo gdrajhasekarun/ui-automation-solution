@@ -23,7 +23,7 @@ async function notifyGenerator(
   try {
     const VALID_TOOLS = ['selenium-java','selenium-csharp','selenium-python','playwright-js','playwright-ts','playwright-python','cypress-js','cypress-ts']
     const resolvedTool = VALID_TOOLS.includes(targetTool) ? targetTool : 'selenium-java'
-    const endpoint = `${GENERATOR_URL}/v2/trigger`
+    const endpoint = `${GENERATOR_URL}/trigger`
     await fetch(endpoint, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },

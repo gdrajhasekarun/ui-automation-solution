@@ -6,13 +6,45 @@
  * All four numeric scores are deterministic — no LLM needed.
  * One smart LLM call assesses spec quality separately.
  */
+import { z } from 'zod'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import type { Graph, Eval, SpecQuality } from '../types.js'
 import { SpecQualitySchema } from '../types.js'
 import { log } from '../logger.js'
 
-const TERMINAL_PATTERNS = /confirm|success|complete|done|thank/i
+const TERMINAL_PATTERNS = /confirm|success|complete|done|thank|summary|receipt|review|finish/i
+
+const TerminalClassificationSchema = z.object({
+  terminalNodeIds: z.array(z.string()),
+})
+
+async function classifyTerminalNodes(
+  candidateIds: string[],
+  nodes: Graph['nodes'],
+  flowName: string | undefined,
+  smartLLM: BaseChatModel,
+): Promise<Set<string>> {
+  try {
+    const pageList = candidateIds.map(id => {
+      const n = nodes[id]
+      return `nodeId: ${id}\nurl: ${n.url}\ntitle: ${n.title ?? ''}\nintent: ${n.spec?.intent ?? n.description ?? '(none)'}`
+    }).join('\n\n')
+
+    const prompt = ChatPromptTemplate.fromMessages([
+      ['system', `You are evaluating web crawl results. Given a user's flow goal and a list of leaf pages (pages with no outgoing navigation), decide which ones represent SUCCESSFUL FLOW COMPLETION (e.g. confirmation, receipt, summary, appointment booked) versus genuine DEAD ENDS where the crawl got stuck on an unrelated or broken page.
+
+Return ONLY the nodeIds of pages that are legitimate flow-completion pages. If unsure, err toward marking it as terminal (do not over-flag dead ends).`],
+      ['human', `Flow goal: "${flowName ?? 'general web app navigation'}"\n\nLeaf pages:\n\n${pageList}`],
+    ])
+
+    const structured = (smartLLM as any).withStructuredOutput(TerminalClassificationSchema)
+    const result = await prompt.pipe(structured).invoke({}) as { terminalNodeIds: string[] }
+    return new Set<string>(result.terminalNodeIds)
+  } catch {
+    return new Set<string>()
+  }
+}
 
 function grade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
   if (score >= 90) return 'A'
@@ -26,6 +58,7 @@ export async function runEval(
   graph: Graph,
   smartLLM: BaseChatModel | null,
   previousGraph: Graph | null,
+  flowName?: string,
 ): Promise<Eval> {
   const flags: string[] = []
   const evaluatedAt = new Date().toISOString()
@@ -65,9 +98,15 @@ export async function runEval(
     // ── Coverage score ─────────────────────────────────────────────────────────
     const expectedNodes = previousGraph?.meta.totalNodes ?? 1
     const orphans = nodeIds.filter(id => id !== seedNodeId && (inbound.get(id) ?? 0) === 0)
-    const deadEnds = nodeIds.filter(id =>
-      (outbound.get(id) ?? 0) === 0 && !TERMINAL_PATTERNS.test(nodes[id].url)
-    )
+
+    const leafIds = nodeIds.filter(id => (outbound.get(id) ?? 0) === 0)
+    const urlTerminals = new Set(leafIds.filter(id => TERMINAL_PATTERNS.test(nodes[id].url)))
+    const ambiguous = leafIds.filter(id => !urlTerminals.has(id))
+    const llmTerminals = smartLLM && ambiguous.length > 0
+      ? await classifyTerminalNodes(ambiguous, nodes, flowName, smartLLM)
+      : new Set<string>()
+    const deadEnds = ambiguous.filter(id => !llmTerminals.has(id))
+
     const crawlErrors = graph.meta.crawlErrors ?? 0
 
     orphans.forEach(id => flags.push(`WARN:  orphan node at ${nodes[id].normalizedUrl} — no inbound edges`))
