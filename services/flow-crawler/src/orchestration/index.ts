@@ -5,7 +5,7 @@ export { PathManager }  from './pathManager.js'
 import { chromium } from 'playwright'
 import * as path from 'path'
 import * as fs from 'fs'
-import type { CrawlerConfig, RequestPayload, Node } from '../types.js'
+import type { CrawlerConfig, RequestPayload, Node, Edge } from '../types.js'
 import { CrawlerGraph as Graph } from '../graph/index.js'
 import { CrawlDataCache } from '../cache/index.js'
 import { readExcel } from '../data/index.js'
@@ -13,13 +13,21 @@ import { buildLLMPair, parseNotes, summarizeGraph } from '../llm/index.js'
 import { runCrawlLoop } from './flowRunner.js'
 import { log } from '../logger.js'
 
-function loadExistingNodes(outputFile: string): Record<string, Node> {
+interface ExistingGraph {
+  nodes: Record<string, Node>
+  edges: Edge[]
+}
+
+function loadExistingGraph(outputFile: string): ExistingGraph {
   try {
-    if (!fs.existsSync(outputFile)) return {}
+    if (!fs.existsSync(outputFile)) return { nodes: {}, edges: [] }
     const data = JSON.parse(fs.readFileSync(outputFile, 'utf8'))
-    return (data.nodes ?? {}) as Record<string, Node>
+    return {
+      nodes: (data.nodes ?? {}) as Record<string, Node>,
+      edges: (data.edges ?? [])  as Edge[],
+    }
   } catch {
-    return {}
+    return { nodes: {}, edges: [] }
   }
 }
 
@@ -40,12 +48,18 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
   const graph = new Graph(config.appId, config.seedUrl)
   const cache = new CrawlDataCache(path.resolve(config.cacheFile))
 
-  // Load existing graph nodes so pageRef names can be reused for similar pages
-  const existingNodes = loadExistingNodes(outputFile)
+  // Load existing graph so pageRef names and edges are reused/merged across runs.
+  // Edges are seeded so branch detection can compare new edges against prior runs
+  // (e.g. authenticated run adds a branch to a node the unauthenticated run already recorded).
+  const { nodes: existingNodes, edges: existingEdges } = loadExistingGraph(outputFile)
   const existingNodeCount = Object.keys(existingNodes).length
   if (existingNodeCount > 0) {
-    log.info('CRAWL', `Loaded ${existingNodeCount} existing nodes for pageRef reuse`)
+    log.info('CRAWL', `Loaded ${existingNodeCount} existing nodes, ${existingEdges.length} existing edges`)
     graph.seedPageRefNames(existingNodes)
+    // Seed prior nodes so edges from previous runs have valid targets in the final graph.
+    // Without this, edges reference nodes that were never visited in the current run → orphaned.
+    graph.seedNodes(existingNodes)
+    graph.seedEdges(existingEdges)
   }
 
   // Load external data sources
@@ -106,7 +120,7 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
 
   let crawlError: Error | undefined
   try {
-    await runCrawlLoop(context, config, graph, excelData, notes, cache, smartLLM, fastLLM, existingNodes)
+    await runCrawlLoop(context, config, graph, excelData, notes, cache, smartLLM, fastLLM, existingNodes as Record<string, Node>)
     await cache.flush()
   } catch (err: any) {
     crawlError = err

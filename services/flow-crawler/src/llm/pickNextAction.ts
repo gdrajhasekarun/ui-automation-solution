@@ -45,16 +45,28 @@ ${elList}
 
 Pick the ONE element that best represents the next step toward "${flowName}".
 Rules:
+- You MUST pick an element (set elementId to a valid id from the list) unless the flow is 100% finished.
 - If form fields were just filled (listed above), always submit that form first before any other navigation.
 - Prefer elements whose label directly matches the flow name or a step in it.
 - If a dialog/overlay is present (Accept, Continue, Close), always pick that first.
-- Set flowDone=true only if the flow destination has already been reached and there is nothing more to click.
-- Set elementId=null only if no element is relevant at all (dead end).
+- Set flowDone=true ONLY if the current page shows a clear completion state (confirmation message, success banner, summary of completed action). A login page, home page, or form page is NEVER a completion state.
+- Set elementId=null ONLY if absolutely no element in the list has any connection to the flow — this should be extremely rare.
 Return the exact element id from the list above.`
 
   try {
     const result = await llm.withStructuredOutput(PickSchema).invoke(prompt)
-    if (result.flowDone || !result.elementId) return null
+    if (result.flowDone) return null
+    if (!result.elementId) {
+      // LLM returned null despite having candidates — fall back to first element ranked by label match
+      log.warn('PICK', `LLM returned null elementId with ${elements.length} candidates — using best-match fallback`)
+      const flowWords = flowName.toLowerCase().split(/\s+/)
+      const scored = elements.map(e => {
+        const label = e.name.toLowerCase()
+        const score = flowWords.filter(w => label.includes(w)).length
+        return { element: e, score }
+      }).sort((a, b) => b.score - a.score)
+      return { element: scored[0].element, reason: 'label-match fallback (LLM returned null)' }
+    }
     const match = elements.find(e => e.id === result.elementId)
     if (!match) return null
     return { element: match, reason: result.reason }

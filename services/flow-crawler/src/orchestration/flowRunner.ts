@@ -75,11 +75,16 @@ export async function runFromPage(
 
   // When the same URL appears with different content (wizard steps), use element fingerprint
   // to create distinct node IDs so each step is captured separately in the graph.
+  // Also deduplicate pages reachable via two different URLs (e.g. /#appointment vs /index.php#appointment):
+  // if any existing node has the same element fingerprint, reuse its ID instead of creating a duplicate.
   const fp  = pageFingerprint(allElements.map(e => e.id))
   const baseId = nodeId(normUrl)
-  const id  = graph.hasNode(baseId) && graph.getNode(baseId)?.fingerprint !== fp
-    ? nodeId(normUrl + '#' + fp.slice(0, 8))
-    : baseId
+  const existingIdByFp = graph.findNodeByFingerprint(fp)
+  const id  = existingIdByFp
+    ? existingIdByFp
+    : graph.hasNode(baseId) && graph.getNode(baseId)?.fingerprint !== fp
+      ? nodeId(normUrl + '#' + fp.slice(0, 8))
+      : baseId
 
   log.step('CAPTURE', `[depth:${ctx.depth}] "${title || normUrl}"  library:${library}  elements:${elements.length}  node:${id}`)
 

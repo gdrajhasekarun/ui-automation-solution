@@ -144,9 +144,11 @@ export const NodeSchema = z.object({
 export type Node = z.infer<typeof NodeSchema>
 
 export const EdgeSchema = z.object({
-  id:      z.string(),
-  from:    z.string(),
-  to:      z.string(),
+  id:          z.string(),
+  from:        z.string(),
+  to:          z.string(),
+  isBranching: z.boolean().optional(),   // true when the same trigger can lead to multiple destinations
+  condition:   z.string().optional(),    // inferred condition for this branch (e.g. 'authenticated', 'unauthenticated')
   trigger: z.object({
     type:         z.enum(['link_click','button_click','form_submit','tab_click','new_tab','js_navigation']),
     semanticType: z.enum(['navigate','open_modal','submit_form','trigger_action','reveal_content']).nullable(),

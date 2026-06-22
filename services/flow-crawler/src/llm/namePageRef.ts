@@ -7,15 +7,33 @@ const Schema = z.object({
   description: z.string(),
 })
 
-// Returns the pageRef from an existing node if ≥80% of element labels overlap
+// Navigation / boilerplate labels that appear on every page — excluded from similarity
+// so pages that only differ in form fields aren't incorrectly merged.
+const NAV_BOILERPLATE = new Set([
+  'home', 'login', 'logout', 'make appointment', 'profile', 'history',
+  'back', 'close', 'cancel', 'info@katalon.com', 'sign in', 'sign out',
+])
+
+function pageSignatureLabels(elements: CapturedElement[]): Set<string> {
+  return new Set(
+    elements
+      .map(e => e.name.trim().toLowerCase())
+      .filter(label => label.length > 1 && !NAV_BOILERPLATE.has(label))
+  )
+}
+
+// Returns the pageRef from an existing node if ≥80% of DISTINCTIVE elements overlap.
+// Distinctive = non-boilerplate labels (form fields, page-specific CTAs).
+// Falls back to full label set only when no distinctive labels exist on either side.
 export function findExistingPageRef(
   elements: CapturedElement[],
   existingNodes: Record<string, Node>,
 ): string | null {
   if (!elements.length || !Object.keys(existingNodes).length) return null
 
-  const currentLabels = new Set(elements.map(e => e.name.trim().toLowerCase()).filter(Boolean))
-  if (!currentLabels.size) return null
+  const currentLabels = pageSignatureLabels(elements)
+  // If this page has NO distinctive elements (pure nav page), don't try to match
+  if (currentLabels.size === 0) return null
 
   let bestRef: string | null = null
   let bestScore = 0
@@ -23,10 +41,10 @@ export function findExistingPageRef(
   for (const node of Object.values(existingNodes)) {
     if (!node.pageRef || !node.elements?.length) continue
 
-    const nodeLabels = new Set(node.elements.map(e => e.name.trim().toLowerCase()).filter(Boolean))
-    if (!nodeLabels.size) continue
+    const nodeLabels = pageSignatureLabels(node.elements)
+    if (nodeLabels.size === 0) continue
 
-    // Jaccard similarity: intersection / union
+    // Jaccard similarity on distinctive labels only
     let intersection = 0
     for (const label of currentLabels) {
       if (nodeLabels.has(label)) intersection++
