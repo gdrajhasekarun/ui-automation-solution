@@ -99,8 +99,11 @@ Write them so the planner can answer: "which page do I go to, which element do I
 interact with, and what value do I enter?"
 
 Rules:
-- Page intent: one sentence describing the USER GOAL this page fulfills, plus what
-  page comes before and after it in the flow (use the navigation context provided).
+- Page intent: one sentence describing the USER GOAL this page fulfills. MUST include:
+  (a) what the user does on this page, and
+  (b) what page comes before and after in the flow (from the navigation context).
+  If an existing intent is provided, ENRICH it — add missing nav context or missing
+  details — do not discard what is already correct.
   Example: "Appointment booking form where the user selects a facility, date and
   healthcare program after logging in; submitting navigates to the confirmation page."
 - Element description: what the element does in terms of the test goal, including any
@@ -177,7 +180,8 @@ Annotate these page states:\n\n{pages}\n\nReturn JSON with pages array.`],
         const options = e._selectOptions?.length ? ` options=[${e._selectOptions.slice(0, 5).join('|')}]` : ''
         return `  id=${e.id} name="${e.name}" type=${e.elementType} label="${e.label ?? ''}"${placeholder}${options}`
       }).join('\n')
-      return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}\npageRef: ${node.pageRef ?? ''}\nelements:\n${elemLines}`
+      const existingIntent = node.spec?.intent ? `\nexisting intent (enrich, do not discard): "${node.spec.intent}"` : ''
+      return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
     }).join('\n\n---\n\n')
 
     try {
