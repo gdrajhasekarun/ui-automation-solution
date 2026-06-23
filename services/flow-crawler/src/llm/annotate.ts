@@ -25,16 +25,23 @@ export async function annotateGraph(
   if (!fastLLM) return
 
   // Build fingerprint → spec map from previous graph for reuse
-  const prevSpecByFingerprint = new Map<string, { intent?: string; description?: string }>()
-  const prevElemSpecBySelector = new Map<string, string>()
+  const prevSpecByFingerprint = new Map<string, { intent?: string; expectedOutcome?: string; precondition?: string }>()
+  const prevElemSpecBySelector = new Map<string, { description: string; expectedOutcome?: string }>()
   if (previousGraph) {
     for (const node of Object.values(previousGraph.nodes)) {
       if (node.fingerprint && node.spec?.intent) {
-        prevSpecByFingerprint.set(node.fingerprint, { intent: node.spec.intent })
+        prevSpecByFingerprint.set(node.fingerprint, {
+          intent:          node.spec.intent,
+          expectedOutcome: node.spec.expectedOutcome,
+          precondition:    node.spec.precondition,
+        })
       }
       for (const el of node.elements ?? []) {
         if (el._selector && el.spec?.description) {
-          prevElemSpecBySelector.set(el._selector, el.spec.description)
+          prevElemSpecBySelector.set(el._selector, {
+            description:     el.spec.description,
+            expectedOutcome: el.spec.expectedOutcome,
+          })
         }
       }
     }
@@ -54,7 +61,8 @@ export async function annotateGraph(
     const FORM_TYPES_REUSE = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'button', 'submit'])
     const hasWeakElemSpec = node.elements.some(el => {
       if (!FORM_TYPES_REUSE.has(el.elementType)) return false
-      const prevDesc = el._selector ? prevElemSpecBySelector.get(el._selector) : undefined
+      const prevEntry = el._selector ? prevElemSpecBySelector.get(el._selector) : undefined
+      const prevDesc = prevEntry?.description
       if (!prevDesc || prevDesc.length < 50) return true
       // select element has options but spec doesn't mention any of them
       if (el._selectOptions?.length && !el._selectOptions.some(o => prevDesc.includes(o.slice(0, 8)))) return true
@@ -64,16 +72,27 @@ export async function annotateGraph(
     if (prevSpec && specIsSubstantive) {
       const prev = prevSpec
       const now = new Date().toISOString()
-      const updatedElements = node.elements.map(el => ({
-        ...el,
-        spec: el.spec?.userEdited ? el.spec : {
-          description: el._selector ? (prevElemSpecBySelector.get(el._selector) ?? el.spec?.description) : el.spec?.description,
-          userEdited:  false,
-          generatedAt: now,
-        },
-      }))
+      const updatedElements = node.elements.map(el => {
+        if (el.spec?.userEdited) return el
+        const prevEntry = el._selector ? prevElemSpecBySelector.get(el._selector) : undefined
+        return {
+          ...el,
+          spec: {
+            description:     prevEntry?.description     ?? el.spec?.description,
+            expectedOutcome: prevEntry?.expectedOutcome ?? el.spec?.expectedOutcome,
+            userEdited:      false,
+            generatedAt:     now,
+          },
+        }
+      })
       graph.updateNode(nodeId, {
-        spec: { intent: prev.intent, userEdited: false, generatedAt: now },
+        spec: {
+          intent:          prev.intent,
+          expectedOutcome: prev.expectedOutcome,
+          precondition:    prev.precondition,
+          userEdited:      false,
+          generatedAt:     now,
+        },
         elements: updatedElements,
       })
       continue
@@ -95,26 +114,32 @@ high-level test cases (e.g. "create an appointment for Friday") into exact
 click-level interaction steps.
 
 Your annotations are the ONLY context the planner has about each page and element.
-Write them so the planner can answer: "which page do I go to, which element do I
-interact with, and what value do I enter?"
+Write them so the planner can answer without seeing the UI:
+  "Which page do I go to? What must be true before I arrive? What do I do here?
+   What value do I enter? What happens after I interact?"
 
-Rules:
-- Page intent: one sentence describing the USER GOAL this page fulfills. MUST include:
-  (a) what the user does on this page, and
-  (b) what page comes before and after in the flow (from the navigation context).
-  If an existing intent is provided, ENRICH it — add missing nav context or missing
-  details — do not discard what is already correct.
+OUTPUT FIELDS PER PAGE:
+- intent: one sentence — the user goal this page fulfills. MUST name (a) what the user
+  does here and (b) what page comes before/after from the navigation context.
+  If an existing intent is provided, ENRICH it rather than discarding it.
   Example: "Appointment booking form where the user selects a facility, date and
   healthcare program after logging in; submitting navigates to the confirmation page."
-- Element description: what the element does in terms of the test goal, including any
-  known valid values or constraints. Be SPECIFIC:
-  - For select/combobox: ALWAYS list the options provided in the element data
-  - For textbox: include example value from crawl notes or placeholder (e.g. "Enter username, e.g. 'John Doe'")
-  - For checkbox/radio: state what checking it means in business terms
-  - For button: state what action it triggers and what comes next
-  Example: "Dropdown to select the healthcare facility; valid options: 'Hongkong CURA
-  Healthcare Center', 'Seoul CURA Healthcare Center', 'Tokyo CURA Healthcare Center'."
-  NOT: "A dropdown element", "Selects a value", or "Allows user to select".`],
+- precondition: what must be true before the user reaches this page (e.g. "user must
+  be logged in", "user must have selected a facility on the previous page"). Omit if
+  the page is a public entry point.
+- expectedOutcome: what the test agent should observe after completing all actions on
+  this page (e.g. "confirmation page appears showing appointment ID and facility name").
+
+OUTPUT FIELDS PER ELEMENT:
+- description: what the element does in terms of the test goal. Be SPECIFIC:
+  - select/combobox: ALWAYS list the options from the element data
+  - textbox: include an example value (e.g. "Enter patient name, e.g. 'John Doe'")
+  - checkbox/radio: state what selecting it means in business terms
+  - button/link: state what action it triggers
+  NOT: "A dropdown element", "Selects a value", "Allows user to select"
+- expectedOutcome: what changes after interacting with this element (e.g. "date picker
+  opens", "form submits and confirmation page loads", "additional fields become visible").
+  Only include when the interaction causes a visible state change or navigation.`],
     ['human', `App summary: {appSummary}
 
 Crawl notes (credentials, field hints, known values):
@@ -185,23 +210,42 @@ Annotate these page states:\n\n{pages}\n\nReturn JSON with pages array.`],
     }).join('\n\n---\n\n')
 
     try {
-      const result = await chain.invoke({ pages: pagesInput, navContext, appSummary, crawlNotes: crawlNotes || 'none' }) as { pages: Array<{ nodeId: string; intent: string; elements: Array<{ elementId: string; description: string }> }> }
+      const result = await chain.invoke({ pages: pagesInput, navContext, appSummary, crawlNotes: crawlNotes || 'none' }) as {
+        pages: Array<{
+          nodeId: string
+          intent: string
+          expectedOutcome?: string
+          precondition?: string
+          elements: Array<{ elementId: string; description: string; expectedOutcome?: string }>
+        }>
+      }
       const now = new Date().toISOString()
 
       for (const page of result.pages) {
         const node = graphNodes[page.nodeId]
         if (!node) continue
-        const descById = new Map(page.elements.map(e => [e.elementId, e.description]))
-        const updatedElements = node.elements.map(el => ({
-          ...el,
-          spec: el.spec?.userEdited ? el.spec : {
-            description: descById.get(el.id) ?? el.spec?.description,
-            userEdited:  false,
-            generatedAt: now,
-          },
-        }))
+        const elemSpecById = new Map(page.elements.map(e => [e.elementId, e]))
+        const updatedElements = node.elements.map(el => {
+          if (el.spec?.userEdited) return el
+          const eSpec = elemSpecById.get(el.id)
+          return {
+            ...el,
+            spec: {
+              description:     eSpec?.description     ?? el.spec?.description,
+              expectedOutcome: eSpec?.expectedOutcome ?? el.spec?.expectedOutcome,
+              userEdited:      false,
+              generatedAt:     now,
+            },
+          }
+        })
         graph.updateNode(page.nodeId, {
-          spec: { intent: page.intent, userEdited: false, generatedAt: now },
+          spec: {
+            intent:          page.intent,
+            expectedOutcome: page.expectedOutcome,
+            precondition:    page.precondition,
+            userEdited:      false,
+            generatedAt:     now,
+          },
           elements: updatedElements,
         })
       }

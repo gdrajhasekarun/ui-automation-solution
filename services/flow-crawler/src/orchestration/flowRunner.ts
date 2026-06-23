@@ -519,8 +519,8 @@ export async function runFromPage(
     }
   }
 
-  // Route prediction at dead end — fires for both BFS and focused-flow modes
-  if (config.routePredictionEnabled !== false && ctx.smartLLM && graph.nodeCount < config.maxPages) {
+  // Route prediction at dead end — BFS mode only; focused-flow has a single known path
+  if (!config.flowName && config.routePredictionEnabled !== false && ctx.smartLLM && graph.nodeCount < config.maxPages) {
     try {
       const predictions = await predictRoutes({
         currentGraph:  graph.toJSON(),
@@ -578,7 +578,9 @@ export async function runCrawlLoop(
     await page.close()
   }
 
-  // ── Phase B: re-trace pending branches ─────────────────────────────────────
+  // ── Phase B: re-trace pending branches (BFS mode only) ────────────────────
+  // Focused-flow mode has a single deterministic path — no alternates to replay.
+  if (config.flowName) return
   while (!branchQueue.isEmpty) {
     const branch = branchQueue.dequeue()!
 

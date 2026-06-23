@@ -28,11 +28,13 @@ export type UILibrary = z.infer<typeof UILibrarySchema>
 
 // ── Spec (page intent + element description) ───────────────────────────────────
 export const SpecSchema = z.object({
-  intent:      z.string().optional(),
-  description: z.string().optional(),
-  userEdited:  z.boolean().default(false),
-  confidence:  z.number().min(0).max(1).optional(),
-  generatedAt: z.string().optional(),
+  intent:          z.string().optional(),
+  expectedOutcome: z.string().optional(),
+  precondition:    z.string().optional(),
+  description:     z.string().optional(),
+  userEdited:      z.boolean().default(false),
+  confidence:      z.number().min(0).max(1).optional(),
+  generatedAt:     z.string().optional(),
 })
 export type Spec = z.infer<typeof SpecSchema>
 
@@ -224,11 +226,14 @@ export const RoutePredictionSchema = z.object({
 })
 
 export const PageAnnotationSchema = z.object({
-  nodeId:   z.string(),
-  intent:   z.string(),
+  nodeId:          z.string(),
+  intent:          z.string(),
+  expectedOutcome: z.string().optional(),
+  precondition:    z.string().optional(),
   elements: z.array(z.object({
-    elementId:   z.string(),
-    description: z.string(),
+    elementId:       z.string(),
+    description:     z.string(),
+    expectedOutcome: z.string().optional(),
   })),
 })
 

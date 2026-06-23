@@ -75,7 +75,6 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
   const [maxPages,      setMaxPages]           = useState(60)
   const [maxDepth,      setMaxDepth]           = useState(3)
   const [headless,      setHeadless]           = useState(true)
-  const [llmEnabled,    setLlmEnabled]         = useState(true)
   const [crawlerMode,   setCrawlerMode]        = useState<'graph' | 'ai'>('ai')
 
   // Flow suggestions derived from the previous AI crawl graph
@@ -241,7 +240,6 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
         max_pages:      maxPages,
         max_depth:      maxDepth,
         headless,
-        llm_enabled:    llmEnabled,
         allowed_domain: allowedDomain.trim() || undefined,
         target_flows:   targetFlows.length > 0 ? targetFlows : undefined,
       })
@@ -254,7 +252,6 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
         target_tool:    targetTool,
         max_pages:      maxPages,
         headless,
-        llm_enabled:    llmEnabled,
         allowed_domain: allowedDomain.trim() || undefined,
         config_path:    configPath.trim() || undefined,
         target_flows:   targetFlows.length > 0 ? targetFlows : undefined,
@@ -401,7 +398,7 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
               style={{ marginTop: 4, width: '100%', ...MONO, fontSize: 12 }}
               options={[
                 { value: 'ai',    label: '🤖 AI Crawler (BFS + LLM flows)' },
-                { value: 'graph', label: '⚡ Graph Crawler (fast BFS)' },
+                // { value: 'graph', label: '⚡ Graph Crawler (fast BFS)' },
               ]}
             />
             <div style={{ ...MONO, fontSize: 10, color: C.muted, marginTop: 3 }}>
@@ -506,10 +503,6 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
             <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Headless browser</label>
             <Switch size="small" checked={headless} onChange={setHeadless} />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <label style={{ ...MONO, fontSize: 11, color: C.muted }}>LLM enrichment</label>
-            <Switch size="small" checked={llmEnabled} onChange={setLlmEnabled} />
-          </div>
           <Button type="primary" block size="middle"
             icon={isRunning ? <SyncOutlined spin /> : <PlayCircleOutlined />}
             loading={triggering} disabled={isRunning || !appId.trim() || !appUrl.trim()}
@@ -605,7 +598,6 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
             {health.active_jobs !== undefined && (
               <Descriptions.Item label="Active Jobs">{String(health.active_jobs)}</Descriptions.Item>
             )}
-            {health.port && <Descriptions.Item label="Port">{String(health.port)}</Descriptions.Item>}
           </Descriptions>
         ) : (
           <span style={{ ...MONO, fontSize: 11, color: C.muted }}>checking…</span>
