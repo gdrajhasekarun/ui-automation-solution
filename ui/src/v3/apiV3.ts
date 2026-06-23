@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
-import type { UiEvent } from '../types'
+import type { UiEvent, StoryInterpretReq, StoryInterpretResp } from '../types'
 
 // ── V3 request / response shapes ──────────────────────────────────────────────
 
@@ -189,6 +189,10 @@ export const apiV3 = createApi({
       providesTags: ['V3AiEvents'],
     }),
 
+    interpretStory: build.mutation<StoryInterpretResp, StoryInterpretReq>({
+      query: (body) => ({ url: '/story/interpret', method: 'POST', body }),
+    }),
+
   }),
 })
 
@@ -203,4 +207,5 @@ export const {
   useV3AiGetCrawlHealthQuery,
   useV3AiGetGraphQuery,
   useV3AiGetEventsQuery,
+  useInterpretStoryMutation,
 } = apiV3

@@ -52,6 +52,24 @@ export interface TestResult {
   created_at?: string
 }
 
+export interface StoryInterpretReq {
+  user_story: string
+  app_url: string
+}
+
+export interface StoryHint {
+  field: string
+  value: string
+}
+
+export interface StoryInterpretResp {
+  flow_name?: string
+  goal?: string
+  hints?: StoryHint[]
+  seed_url?: string
+  error?: string
+}
+
 export interface TestRun {
   run_id?: string
   id?: string

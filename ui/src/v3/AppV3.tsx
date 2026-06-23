@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Badge, Button, ConfigProvider, Descriptions, Divider, Input, InputNumber,
-  Layout, Select, Space, Switch, Tabs, Tag, Tooltip, theme as antTheme,
+  Badge, Button, Card, ConfigProvider, Descriptions, Divider, Input, InputNumber,
+  Layout, Modal, Select, Space, Switch, Tabs, Tag, Tooltip, Typography, theme as antTheme,
 } from 'antd'
 import {
   ApiOutlined, BulbFilled, BulbOutlined, CheckCircleOutlined,
@@ -23,8 +23,9 @@ import {
   useV3AiGetJobStatusQuery,
   useV3AiGetCrawlHealthQuery,
   useV3AiGetGraphQuery,
+  useInterpretStoryMutation,
 } from './apiV3'
-import type { UiEvent } from '../types'
+import type { UiEvent, StoryInterpretResp } from '../types'
 
 const { Header, Content, Sider } = Layout
 const MONO: React.CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -106,6 +107,17 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
   const sseRef = useRef<EventSource | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
+  // Story mode state — persisted across stage navigation
+  const [storyMode,         setStoryMode]         = useState<'story' | 'manual'>('story')
+  const [storyDescription,  setStoryDescription]  = useState('')
+  const [acceptanceCriteria,setAcceptanceCriteria] = useState('')
+  const [storyStage,        setStoryStage]        = useState<'input' | 'intent'>('input')
+  const [parsedIntent,      setParsedIntent]      = useState<StoryInterpretResp | null>(null)
+  const [parsedFlowName,    setParsedFlowName]    = useState('')
+  const [parsedSeedUrl,     setParsedSeedUrl]     = useState('')
+
+  const [interpretStory,    { isLoading: isParsing }] = useInterpretStoryMutation()
+
   const [triggerGraphCrawl,  { isLoading: triggeringGraph }]  = useV3TriggerCrawlMutation()
   const [triggerAiCrawl,     { isLoading: triggeringAi }]     = useV3AiTriggerCrawlMutation()
   const { data: graphHealth } = useV3GetCrawlHealthQuery()
@@ -171,6 +183,40 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
     logRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
   }, [events.length])
 
+  async function runParse() {
+    const combined = `Description:\n${storyDescription}\n\nAcceptance Criteria:\n${acceptanceCriteria}`
+    const resp = await interpretStory({ user_story: combined, app_url: appUrl })
+    if ('data' in resp && resp.data && !resp.data.error) {
+      const data = resp.data
+      setParsedIntent(data)
+      setParsedFlowName(data.flow_name ?? '')
+      setParsedSeedUrl(data.seed_url ?? appUrl)
+      setStoryStage('intent')
+    }
+  }
+
+  function handleGetIntent() {
+    if (parsedIntent) {
+      Modal.confirm({
+        title: 'Re-parse story?',
+        content: 'An intent has already been derived. Do you want to re-run the LLM parse and overwrite it?',
+        okText: 'Yes, re-parse',
+        cancelText: 'No, keep existing',
+        onOk: () => { void runParse() },
+        onCancel: () => setStoryStage('intent'),
+      })
+      return
+    }
+    void runParse()
+  }
+
+  function handleStartFromStory() {
+    setTargetFlows([parsedFlowName])
+    if (parsedSeedUrl) setLocalAppUrl(parsedSeedUrl)
+    setCrawlerMode('ai')
+    void handleTrigger()
+  }
+
   async function handleTrigger() {
     if (!appId.trim() || !appUrl.trim()) return
     dispatch(setAppId(appId.trim()))
@@ -230,6 +276,119 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
         background: C.surface, borderRight: `1px solid ${C.border}`,
         overflowY: 'auto', padding: '20px 16px',
       }}>
+        {/* Mode toggle */}
+        <div style={{ display: 'flex', marginBottom: 16, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+          {(['story', 'manual'] as const).map(mode => (
+            <button key={mode} onClick={() => setStoryMode(mode)} style={{
+              flex: 1, padding: '5px 0', cursor: 'pointer', border: 'none',
+              background: storyMode === mode ? C.blue : 'transparent',
+              color: storyMode === mode ? '#fff' : C.muted,
+              ...MONO, fontSize: 11, fontWeight: storyMode === mode ? 600 : 400,
+              textTransform: 'uppercase', letterSpacing: '0.06em',
+            }}>
+              {mode === 'story' ? 'Story Mode' : 'Manual'}
+            </button>
+          ))}
+        </div>
+
+        {storyMode === 'story' ? (
+          /* ── Story Mode ──────────────────────────────────────────── */
+          storyStage === 'input' ? (
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <div>
+                <label style={{ ...MONO, fontSize: 11, color: C.muted }}>App ID</label>
+                <Input value={appId} onChange={e => setLocalAppId(e.target.value)}
+                  placeholder="my-app" size="small"
+                  style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ ...MONO, fontSize: 11, color: C.muted }}>App URL</label>
+                <Input value={appUrl} onChange={e => setLocalAppUrl(e.target.value)}
+                  placeholder="http://localhost:8080" size="small"
+                  style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ ...MONO, fontSize: 11, color: C.muted }}>User Story Description</label>
+                <Input.TextArea
+                  rows={5} value={storyDescription}
+                  onChange={e => setStoryDescription(e.target.value)}
+                  placeholder={"As a [role], I want to [action] so that [outcome]..."}
+                  style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Acceptance Criteria</label>
+                <Input.TextArea
+                  rows={5} value={acceptanceCriteria}
+                  onChange={e => setAcceptanceCriteria(e.target.value)}
+                  placeholder={"Given...\nWhen...\nThen..."}
+                  style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+              </div>
+              <Button type="primary" block
+                loading={isParsing}
+                disabled={!storyDescription.trim() || !appUrl.trim() || !appId.trim()}
+                onClick={handleGetIntent}
+                style={{ ...MONO, fontWeight: 600 }}>
+                Get Intent
+              </Button>
+            </Space>
+          ) : (
+            /* Stage 2 — intent confirmation */
+            <Card
+              size="small"
+              title={<span style={{ ...MONO, fontSize: 12 }}>Parsed Intent</span>}
+              extra={
+                <Button size="small" type="text" style={{ ...MONO, fontSize: 11, color: C.muted }}
+                  onClick={() => setStoryStage('input')}>
+                  ← Edit Story
+                </Button>
+              }
+              styles={{ body: { padding: '12px' } }}
+              style={{ background: C.surface, borderColor: C.border }}
+            >
+              <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                <div>
+                  <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Flow Name</label>
+                  <Input value={parsedFlowName} onChange={e => setParsedFlowName(e.target.value)}
+                    size="small" style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+                </div>
+                {parsedIntent?.goal && (
+                  <div>
+                    <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Goal</label>
+                    <Typography.Text style={{ display: 'block', marginTop: 4, ...MONO, fontSize: 11, color: C.text }}>
+                      {parsedIntent.goal}
+                    </Typography.Text>
+                  </div>
+                )}
+                {parsedIntent?.hints && parsedIntent.hints.length > 0 && (
+                  <div>
+                    <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Hints</label>
+                    <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {parsedIntent.hints.map(h => (
+                        <Tag key={h.field} style={{ ...MONO, fontSize: 10 }}>
+                          {h.field} = {h.field.toLowerCase().includes('password') ? '***' : h.value}
+                        </Tag>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <label style={{ ...MONO, fontSize: 11, color: C.muted }}>Seed URL</label>
+                  <Input value={parsedSeedUrl} onChange={e => setParsedSeedUrl(e.target.value)}
+                    size="small" style={{ marginTop: 4, ...MONO, fontSize: 12 }} />
+                </div>
+                <Button type="primary" block
+                  icon={isRunning ? <SyncOutlined spin /> : <PlayCircleOutlined />}
+                  loading={triggering} disabled={isRunning || !parsedFlowName.trim()}
+                  onClick={handleStartFromStory}
+                  style={{ ...MONO, fontWeight: 600, marginTop: 4 }}>
+                  {isRunning ? 'Crawling…' : 'Start Crawl →'}
+                </Button>
+              </Space>
+            </Card>
+          )
+        ) : (
+          /* ── Manual Config ───────────────────────────────────────── */
+          <>
         <p style={{ ...MONO, fontSize: 11, color: C.muted, marginBottom: 16, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Crawl Configuration
         </p>
@@ -359,6 +518,8 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
             {isRunning ? 'Crawling…' : crawlerMode === 'ai' ? 'Start AI Crawl' : 'Start Graph Crawl'}
           </Button>
         </Space>
+        </>
+        )}
 
         {crawlJobId && (
           <>

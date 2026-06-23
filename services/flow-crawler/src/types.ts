@@ -263,7 +263,7 @@ export const GraphSchema = z.object({
       removedEdges: z.array(z.string()),
       unchanged:    z.number(),
     }).optional(),
-    eval: EvalSchema.optional(),
+    eval:  EvalSchema.optional(),
   }),
   nodes: z.record(z.string(), NodeSchema),
   edges: z.array(EdgeSchema),

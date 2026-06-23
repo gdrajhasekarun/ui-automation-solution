@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, FastAPI
 from config import DASHBOARD_URL, JAVA_DIR, PORT, SHARED_DIR
 from excel_reader import load_test_cases
 from step_planner import plan
+from story_parser import parse_story
 from test_generator import generate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -97,6 +98,14 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
         logger.error(f"Planner job {job_id} failed:\n{tb}")
         await _notify(app_id, "PLANNER", f"Planning failed for {tc_name}: {tb[:300]}", "ERROR")
         _jobs[job_id]["status"] = "error"
+
+
+@app.post("/story/interpret")
+async def story_interpret(body: dict):
+    user_story = body.get("user_story", "")
+    app_url = body.get("app_url", "")
+    result = await parse_story(user_story, app_url)
+    return result
 
 
 @app.post("/plan/load-excel")

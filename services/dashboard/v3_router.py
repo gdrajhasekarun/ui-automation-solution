@@ -21,7 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from config import GRAPH_CRAWLER_URL
+from config import GRAPH_CRAWLER_URL, PLANNER_URL
 from db import (db_emit_event, db_insert, db_list, db_list_after_rowid,
                 db_list_since, db_rowid_before_since)
 
@@ -423,3 +423,17 @@ async def v3_stream_events(request: Request, app_id: str, since: str = ""):
             "Connection":        "keep-alive",
         },
     )
+
+
+# ── Story interpreter (proxies to planner service) ─────────────────────────────
+
+@router.post("/story/interpret")
+async def v3_story_interpret(body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{PLANNER_URL}/story/interpret", json=body)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        logger.error(f"Story interpret failed: {e}")
+        return JSONResponse(status_code=503, content={"error": str(e)})
