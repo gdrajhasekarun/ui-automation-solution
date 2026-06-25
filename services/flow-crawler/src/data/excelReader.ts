@@ -37,13 +37,14 @@ export function readExcel(filePath: string): ExcelData {
   // Credentials sheet
   const credSheet = workbook.Sheets['Credentials'] ?? workbook.Sheets['credentials']
   if (credSheet) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(credSheet, { defval: '' })
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(credSheet, { defval: '' })
     for (const row of rows) {
-      const account_id = (row['account_id'] || row['Account ID'] || '').trim()
-      const username   = (row['username']   || row['Username']   || row['email'] || '').trim()
-      const password   = (row['password']   || row['Password']   || '').trim()
+      const str = (v: unknown) => String(v ?? '').trim()
+      const account_id = str(row['account_id'] ?? row['Account ID'])
+      const username   = str(row['username']   ?? row['Username']  ?? row['email'])
+      const password   = str(row['password']   ?? row['Password'])
       if (username || password) {
-        credentials.push({ account_id, username, password, role: row['role'] || undefined })
+        credentials.push({ account_id, username, password, role: str(row['role']) || undefined })
       }
     }
   }
@@ -51,16 +52,17 @@ export function readExcel(filePath: string): ExcelData {
   // FormFills sheet
   const fillSheet = workbook.Sheets['FormFills'] ?? workbook.Sheets['formfills'] ?? workbook.Sheets['Form Fills']
   if (fillSheet) {
-    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(fillSheet, { defval: '' })
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(fillSheet, { defval: '' })
     for (const row of rows) {
-      const field_match = (row['field_match'] || row['Field Match'] || row['field'] || '').trim().toLowerCase()
-      const value       = (row['value']       || row['Value']       || '').trim()
+      const str = (v: unknown) => String(v ?? '').trim()
+      const field_match = str(row['field_match'] ?? row['Field Match'] ?? row['field']).toLowerCase()
+      const value       = str(row['value']       ?? row['Value'])
       if (field_match && value) {
         formFills.push({
           field_match,
           value,
-          account_id: row['account_id'] || undefined,
-          notes:      row['notes']      || undefined,
+          account_id: str(row['account_id']) || undefined,
+          notes:      str(row['notes'])      || undefined,
         })
       }
     }

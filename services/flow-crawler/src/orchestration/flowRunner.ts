@@ -153,7 +153,7 @@ export async function runFromPage(
 
     while (iterations++ < MAX_SAME_PAGE_ITERS) {
       // Step 1: fill all form fields (including combobox/select dropdowns)
-      const filledThisIteration: string[] = []
+      const filledFieldLabels: string[] = []
       const formFields = currentElements.filter(e =>
         e.elementType === 'textbox' || e.elementType === 'textarea' ||
         e.elementType === 'select'  || e.elementType === 'combobox'
@@ -275,7 +275,7 @@ export async function runFromPage(
           element.fillSource     = fillResult.source
           element.fillConfidence = fillResult.confidence
           log.step('INTERACT', `  → fill     "${element.name}"  value="${valueToFill}"  source=${fillResult.source}`)
-          filledThisIteration.push(element.name)
+          filledFieldLabels.push(element.name)
           await dispatch(page, element, currentElements, [element], library, config.headless, valueToFill)
           await waitForIdle(page)
           if (fillResult.source === 'llm' || fillResult.source === 'excel') graph.incrementLLMCalls()
@@ -305,7 +305,7 @@ export async function runFromPage(
         log.info('PICK', `    [${String(i + 1).padStart(3)}] ${e.elementType.padEnd(8)} "${e.name}"  selector=${e._selector}`)
       })
 
-      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM, filledThisIteration)
+      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM, filledFieldLabels)
       graph.incrementLLMCalls()
 
       if (!pick) {
@@ -365,6 +365,59 @@ export async function runFromPage(
         log.info('PICK', `  Page content changed — re-capturing elements and continuing flow`)
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
         await waitForIdle(page)
+        // Scroll to bottom so off-screen elements (forms revealed below the fold) are rendered
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {})
+        await page.waitForTimeout(400)
+
+        // Check for results tables/grids — not interactive so won't appear in capturePageElements
+        const resultsMeta = await page.evaluate(() => {
+          const tables = document.querySelectorAll('table, [role="grid"], [role="table"]')
+          for (const table of Array.from(tables)) {
+            const rows = table.querySelectorAll('tr, [role="row"]')
+            if (rows.length < 2) continue   // need at least a header + 1 data row
+            const headerCells = Array.from(rows[0].querySelectorAll('th, [role="columnheader"]'))
+            const headers = headerCells.map(c => (c.textContent || '').trim()).filter(Boolean)
+            const dataRows = rows.length - 1
+            return { headers, dataRows }
+          }
+          return null
+        }).catch(() => null)
+
+        if (resultsMeta && resultsMeta.dataRows > 0) {
+          log.info('PICK', `  Results table detected (${resultsMeta.dataRows} rows, cols: ${resultsMeta.headers.join(', ')}) — recording node and finishing flow`)
+
+          // Record the results state as a terminal wizard-step node
+          const resultsUrl   = page.url()
+          const resultsTitle = await page.title()
+          const resultsFp    = `results-${resultsMeta.dataRows}-${resultsMeta.headers.join('|').slice(0, 40)}`
+          const resultsNodeId = nodeId(normalizeUrl(resultsUrl) + '#results')
+          if (!graph.hasNode(resultsNodeId)) {
+            let resultsPageRef = 'Search Results'
+            if (ctx.smartLLM) {
+              const meta = await namePageRef(resultsTitle, resultsUrl, [], ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
+              graph.incrementLLMCalls()
+              resultsPageRef = graph.registerPageRef(meta.pageRef || 'Search Results')
+            }
+            const resultsDescription = `Fee schedule results table: ${resultsMeta.dataRows} rows, columns: ${resultsMeta.headers.join(', ')}`
+            graph.addNode(resultsNodeId, {
+              url: resultsUrl, normalizedUrl: normalizeUrl(resultsUrl), title: resultsTitle,
+              pageRef: resultsPageRef, description: resultsDescription,
+              fingerprint: resultsFp, uiLibrary: library,
+              elements: [], unfilledFields: [],
+            })
+            log.info('GRAPH', `  Results node: ${resultsNodeId}  pageRef="${resultsPageRef}"  rows:${resultsMeta.dataRows}`)
+          }
+          graph.addEdge({
+            from: currentNodeId, to: resultsNodeId,
+            trigger: {
+              type: 'button_click', semanticType: 'submit_form',
+              elementId: pick.element.id, elementName: pick.element.name || null,
+              formFields: filledFieldLabels,
+            },
+          })
+          break
+        }
+
         currentElements = await capturePageElements(page, library)
         currentElements = await filterElements(currentElements, config.flowName!, page.url(), await page.title(), ctx.smartLLM!)
         log.info('FILTER', `  Re-filter after content change: ${currentElements.length} elements`)

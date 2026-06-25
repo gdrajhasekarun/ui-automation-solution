@@ -125,19 +125,32 @@ export async function capturePageElements(
         return true
       },
 
+      collectFromRoot(root: Element | ShadowRoot, selector: string): Element[] {
+        const found: Element[] = Array.from(root.querySelectorAll(selector))
+        // Recurse into shadow roots of all descendants
+        const all = Array.from(root.querySelectorAll('*'))
+        for (const el of all) {
+          if ((el as any).shadowRoot) {
+            found.push(...this.collectFromRoot((el as any).shadowRoot, selector))
+          }
+        }
+        return found
+      },
+
       process() {
         const searchRoot = this.getOverlayRoot()
 
-        const nodes = searchRoot.querySelectorAll(
+        const selector =
           'a, button, [role="button"], [role="tab"], [role="menuitem"], [role="link"], [role="option"],' +
           'input:not([type="hidden"]), select, textarea,' +
           '[role="textbox"], [role="combobox"], [role="listbox"], [role="spinbutton"],' +
           '[role="checkbox"], [role="radio"], [role="switch"],' +
           'mat-select, mat-checkbox, mat-radio-button, mat-slide-toggle,' +
           'nav li, header li, [class*="nav"] li, [class*="menu"] li'
-        )
 
-        for (const node of Array.from(nodes)) {
+        const nodes = this.collectFromRoot(searchRoot, selector)
+
+        for (const node of nodes) {
           let targetEl = node as HTMLElement
           const tag = targetEl.tagName.toLowerCase()
 
@@ -166,8 +179,35 @@ export async function capturePageElements(
             || ['textbox', 'combobox', 'listbox', 'spinbutton', 'checkbox', 'radio', 'switch'].includes(roleAttr)
             || ['mat-select', 'mat-checkbox', 'mat-radio-button'].includes(targetTag)
 
+          // Look up associated <label> text — more human-readable than name attribute
+          let labelElText = ''
+          if (isFormField) {
+            const elId = targetEl.id
+            if (elId) {
+              const labelEl = document.querySelector(`label[for="${elId}"]`)
+              if (labelEl) labelElText = (labelEl.textContent || '').replace(/\s+/g, ' ').trim()
+            }
+            if (!labelElText) {
+              const closest = targetEl.closest('label')
+              if (closest) {
+                // Clone to remove the input's own text from the label text
+                const clone = closest.cloneNode(true) as HTMLElement
+                clone.querySelectorAll('input, select, textarea').forEach(c => c.remove())
+                labelElText = (clone.textContent || '').replace(/\s+/g, ' ').trim()
+              }
+            }
+            // Also check aria-labelledby
+            if (!labelElText) {
+              const labelledBy = targetEl.getAttribute('aria-labelledby')
+              if (labelledBy) {
+                const refEl = document.getElementById(labelledBy)
+                if (refEl) labelElText = (refEl.textContent || '').replace(/\s+/g, ' ').trim()
+              }
+            }
+          }
+
           const rawLabel = isFormField
-            ? (ariaLabel || placeholder || nameAttr || titleAttr || textCnt).slice(0, 120).trim()
+            ? (ariaLabel || labelElText || placeholder || titleAttr || textCnt || nameAttr).slice(0, 120).trim()
             : (ariaLabel || titleAttr || textCnt).slice(0, 120).trim()
 
           if (!rawLabel || rawLabel.length < 2) continue

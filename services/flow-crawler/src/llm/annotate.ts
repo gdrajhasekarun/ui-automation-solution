@@ -14,7 +14,8 @@ import type { Graph, CrawlerConfig } from '../types.js'
 import { AnnotationBatchSchema } from '../types.js'
 import { log } from '../logger.js'
 
-const BATCH_SIZE = 5
+const BATCH_SIZE = 2
+const MAX_ELEMENTS_PER_NODE = 12
 
 export async function annotateGraph(
   graph: CrawlerGraph,
@@ -139,8 +140,18 @@ OUTPUT FIELDS PER ELEMENT:
   NOT: "A dropdown element", "Selects a value", "Allows user to select"
 - expectedOutcome: what changes after interacting with this element (e.g. "date picker
   opens", "form submits and confirmation page loads", "additional fields become visible").
-  Only include when the interaction causes a visible state change or navigation.`],
+  Only include when the interaction causes a visible state change or navigation.
+
+IMPORTANT SCOPING RULES:
+- Pages often contain widgets unrelated to the crawled flow (e.g. newsletter signup, social
+  links, cookie banners). Base intent, precondition, and expectedOutcome ONLY on the
+  navigation graph context and the target flow — do NOT derive preconditions from incidental
+  page elements that were not part of the crawl path.
+- Only annotate elements listed in the page data below. Skip incidental widgets
+  (newsletter signups, social share buttons, footer nav links) — set their description to
+  a brief dismissal or omit their elementId from the output entirely.`],
     ['human', `App summary: {appSummary}
+Target flow being crawled: {flowName}
 
 Crawl notes (credentials, field hints, known values):
 {crawlNotes}
@@ -148,7 +159,22 @@ Crawl notes (credentials, field hints, known values):
 Navigation context (which pages link to/from each page):
 {navContext}
 
-Annotate these page states:\n\n{pages}\n\nReturn JSON with pages array.`],
+Annotate these page states:\n\n{pages}
+
+CRITICAL — return JSON matching EXACTLY this structure (elements nested inside each page, NOT as siblings):
+{{
+  "pages": [
+    {{
+      "nodeId": "<nodeId from above>",
+      "intent": "<one sentence>",
+      "precondition": "<optional>",
+      "expectedOutcome": "<optional>",
+      "elements": [
+        {{ "elementId": "<id>", "description": "<specific description>", "expectedOutcome": "<optional>" }}
+      ]
+    }}
+  ]
+}}`],
   ])
 
   const structured = (fastLLM as any).withStructuredOutput(AnnotationBatchSchema)
@@ -183,74 +209,93 @@ Annotate these page states:\n\n{pages}\n\nReturn JSON with pages array.`],
     }
   } catch { /* optional */ }
 
-  for (let i = 0; i < toAnnotate.length; i += BATCH_SIZE) {
-    const batch = toAnnotate.slice(i, i + BATCH_SIZE)
+  const FORM_TYPES = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'button', 'submit'])
+  const flowName = _config.flowName ?? 'general web app exploration'
 
-    const navContext = batch.map(({ nodeId }) => {
+  function buildPageInput(nodeId: string): string {
+    const node = graphNodes[nodeId]
+    const sorted = [
+      ...node.elements.filter(e => FORM_TYPES.has(e.elementType)),
+      ...node.elements.filter(e => !FORM_TYPES.has(e.elementType)),
+    ]
+    const elemLines = sorted.slice(0, MAX_ELEMENTS_PER_NODE).map(e => {
+      const placeholder = e.placeholder ? ` placeholder="${e.placeholder}"` : ''
+      const options = e._selectOptions?.length ? ` options=[${e._selectOptions.slice(0, 5).join('|')}]` : ''
+      return `  id=${e.id} name="${e.name}" type=${e.elementType} label="${e.label ?? ''}"${placeholder}${options}`
+    }).join('\n')
+    const existingIntent = node.spec?.intent ? `\nexisting intent (enrich, do not discard): "${node.spec.intent}"` : ''
+    return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
+  }
+
+  function buildNavContext(nodeIds: string[]): string {
+    return nodeIds.map(nodeId => {
       const from = inboundNames.get(nodeId) ?? []
       const to   = outboundNames.get(nodeId) ?? []
       return `${nodeId}: reached from [${from.join(', ') || 'entry point'}] → leads to [${to.join(', ') || 'terminal'}]`
     }).join('\n')
+  }
 
-    const pagesInput = batch.map(({ nodeId }) => {
-      const node = graphNodes[nodeId]
-      const FORM_TYPES = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'button', 'submit'])
-      // Form/action elements first so the LLM focuses on what matters for test planning
-      const sorted = [
-        ...node.elements.filter(e => FORM_TYPES.has(e.elementType)),
-        ...node.elements.filter(e => !FORM_TYPES.has(e.elementType)),
-      ]
-      const elemLines = sorted.slice(0, 20).map(e => {
-        const placeholder = e.placeholder ? ` placeholder="${e.placeholder}"` : ''
-        const options = e._selectOptions?.length ? ` options=[${e._selectOptions.slice(0, 5).join('|')}]` : ''
-        return `  id=${e.id} name="${e.name}" type=${e.elementType} label="${e.label ?? ''}"${placeholder}${options}`
-      }).join('\n')
-      const existingIntent = node.spec?.intent ? `\nexisting intent (enrich, do not discard): "${node.spec.intent}"` : ''
-      return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
-    }).join('\n\n---\n\n')
-
-    try {
-      const result = await chain.invoke({ pages: pagesInput, navContext, appSummary, crawlNotes: crawlNotes || 'none' }) as {
-        pages: Array<{
-          nodeId: string
-          intent: string
-          expectedOutcome?: string
-          precondition?: string
-          elements: Array<{ elementId: string; description: string; expectedOutcome?: string }>
-        }>
-      }
-      const now = new Date().toISOString()
-
-      for (const page of result.pages) {
-        const node = graphNodes[page.nodeId]
-        if (!node) continue
-        const elemSpecById = new Map(page.elements.map(e => [e.elementId, e]))
-        const updatedElements = node.elements.map(el => {
-          if (el.spec?.userEdited) return el
-          const eSpec = elemSpecById.get(el.id)
-          return {
-            ...el,
-            spec: {
-              description:     eSpec?.description     ?? el.spec?.description,
-              expectedOutcome: eSpec?.expectedOutcome ?? el.spec?.expectedOutcome,
-              userEdited:      false,
-              generatedAt:     now,
-            },
-          }
-        })
-        graph.updateNode(page.nodeId, {
+  function applyAnnotationResult(pages: Array<{
+    nodeId: string; intent: string; expectedOutcome?: string; precondition?: string
+    elements: Array<{ elementId: string; description: string; expectedOutcome?: string }>
+  }>): void {
+    const now = new Date().toISOString()
+    for (const page of pages) {
+      const node = graphNodes[page.nodeId]
+      if (!node) continue
+      const elemSpecById = new Map(page.elements.map(e => [e.elementId, e]))
+      const updatedElements = node.elements.map(el => {
+        if (el.spec?.userEdited) return el
+        const eSpec = elemSpecById.get(el.id)
+        return {
+          ...el,
           spec: {
-            intent:          page.intent,
-            expectedOutcome: page.expectedOutcome,
-            precondition:    page.precondition,
+            description:     eSpec?.description     ?? el.spec?.description,
+            expectedOutcome: eSpec?.expectedOutcome ?? el.spec?.expectedOutcome,
             userEdited:      false,
             generatedAt:     now,
           },
-          elements: updatedElements,
-        })
+        }
+      })
+      graph.updateNode(page.nodeId, {
+        spec: {
+          intent:          page.intent,
+          expectedOutcome: page.expectedOutcome,
+          precondition:    page.precondition,
+          userEdited:      false,
+          generatedAt:     now,
+        },
+        elements: updatedElements,
+      })
+    }
+  }
+
+  async function invokeBatch(nodeIds: string[]): Promise<void> {
+    const pagesInput = nodeIds.map(buildPageInput).join('\n\n---\n\n')
+    const navContext = buildNavContext(nodeIds)
+    const result = await chain.invoke({ pages: pagesInput, navContext, appSummary, crawlNotes: crawlNotes || 'none', flowName }) as {
+      pages: Array<{
+        nodeId: string; intent: string; expectedOutcome?: string; precondition?: string
+        elements: Array<{ elementId: string; description: string; expectedOutcome?: string }>
+      }>
+    }
+    applyAnnotationResult(result.pages)
+  }
+
+  for (let i = 0; i < toAnnotate.length; i += BATCH_SIZE) {
+    const batch = toAnnotate.slice(i, i + BATCH_SIZE)
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1
+    try {
+      await invokeBatch(batch.map(b => b.nodeId))
+    } catch (batchErr: any) {
+      log.warn('ANNOTATE', `Batch ${batchNum} failed (${batch.length} nodes) — retrying one node at a time`)
+      for (const { nodeId } of batch) {
+        try {
+          await invokeBatch([nodeId])
+        } catch (singleErr: any) {
+          log.warn('ANNOTATE', `  Node ${nodeId} failed after retry: ${singleErr.message?.slice(0, 120)}`)
+        }
       }
-    } catch (err: any) {
-      log.warn('ANNOTATE', `Batch ${Math.floor(i / BATCH_SIZE) + 1} failed: ${err.message}`)
     }
   }
 

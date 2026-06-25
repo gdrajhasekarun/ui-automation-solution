@@ -149,15 +149,30 @@ export async function runEval(
     const brokenEdges = edges.filter(e => !nodes[e.to])
     const noSemantic = edges.filter(e => e.trigger.semanticType === null)
     const noDescription = nodeIds.filter(id => !nodes[id].description && !nodes[id].spec?.intent)
-    // spec.description on elements only available post-annotation
-    const noElemSpec = allElements.filter(e => !e.spec?.description)
+    // Only penalise form-fill types and filled/interacted buttons for missing specs.
+    // Pure nav buttons (no fillSource, not interacted) are site chrome — they won't be
+    // annotated and should not tank the score.
+    const FORM_FILL_TYPES = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'toggle'])
+    // Count how many nodes each element label appears on — global nav elements appear on every page
+    const labelNodeCount = new Map<string, number>()
+    for (const el of allElements) {
+      labelNodeCount.set(el.name, (labelNodeCount.get(el.name) ?? 0) + 1)
+    }
+    const isGlobalChrome = (el: (typeof allElements)[0]) =>
+      (labelNodeCount.get(el.name) ?? 0) > 1 && el.elementType === 'button' && !el.fillSource
+    const flowElements = allElements.filter(e =>
+      FORM_FILL_TYPES.has(e.elementType) ||
+      (e.elementType === 'button' && (e.fillSource !== null || e.required)) ||
+      e.elementType === 'button'
+    ).filter(e => !isGlobalChrome(e))
+    const noElemSpec = flowElements.filter(e => !e.spec?.description)
 
     brokenEdges.forEach(e => flags.push(`ERROR: broken edge ${e.id} — target node ${e.to} missing from graph`))
 
     const graphScore = Math.max(0, Math.round(
       100
-      - (noDescription.length * 3)
-      - (noElemSpec.length * 2)
+      - (noDescription.length * 5)
+      - (noElemSpec.length * 4)
       - (noSemantic.length * 3)
       - (brokenEdges.length * 5)
     ))
@@ -165,7 +180,7 @@ export async function runEval(
       noDescription.length > 0 && `${noDescription.length} nodes without intent`,
       noSemantic.length > 0 && `${noSemantic.length} edges without semanticType`,
       brokenEdges.length > 0 && `${brokenEdges.length} broken edge(s)`,
-      noElemSpec.length > 0 && `${noElemSpec.length} elements without spec`,
+      noElemSpec.length > 0 && `${noElemSpec.length} action elements without spec`,
     ].filter(Boolean).join(', ') || 'all good'
 
     // ── Route prediction score ─────────────────────────────────────────────────
@@ -194,35 +209,40 @@ export async function runEval(
     let specQuality: SpecQuality | null = null
     if (smartLLM) {
       try {
-        const sampleNodes = Object.values(nodes).slice(0, 5)
-        // Prioritise form/action elements (the ones planners care about) over nav links
-        const FORM_TYPES = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'button', 'submit'])
-        const allElems = Object.values(nodes).flatMap(n => n.elements)
-        const sampleElements = [
-          ...allElems.filter(e => FORM_TYPES.has(e.elementType)),
-          ...allElems.filter(e => !FORM_TYPES.has(e.elementType)),
-        ].slice(0, 10)
+        // Only evaluate nodes that have specs written (unannotated nodes skew the score down)
+        const annotatedNodes = Object.values(nodes).filter(n => n.spec?.intent)
+        const sampleNodes = annotatedNodes.slice(0, 5)
+        // Only show elements with specs written — evaluating (none) entries unfairly tanks the score
+        const annotatedElems = allElements.filter(e => e.spec?.description && !isGlobalChrome(e))
+        const sampleElements = annotatedElems.slice(0, 12)
 
-        const nodeSpecLines = sampleNodes.map(n =>
-          `Page: "${n.title}" — intent: "${n.spec?.intent ?? n.description ?? '(none)'}"`
-        ).join('\n')
-        const elemSpecLines = sampleElements.map(e =>
-          `Element: "${e.name}" (${e.elementType}) — description: "${e.spec?.description ?? '(none)'}"`
-        ).join('\n')
+        const nodeSpecLines = sampleNodes.map(n => {
+          const pre = n.spec?.precondition ? `\n  precondition: "${n.spec.precondition}"` : ''
+          const out = n.spec?.expectedOutcome ? `\n  expectedOutcome: "${n.spec.expectedOutcome}"` : ''
+          return `Page: "${n.title}"\n  intent: "${n.spec?.intent ?? '(none)'}"`  + pre + out
+        }).join('\n\n')
+        const elemSpecLines = sampleElements.map(e => {
+          const out = e.spec?.expectedOutcome ? `  → expectedOutcome: "${e.spec.expectedOutcome}"` : ''
+          return `Element: "${e.name}" (${e.elementType})\n  description: "${e.spec?.description}"${out ? '\n' + out : ''}`
+        }).join('\n\n')
 
         const prompt = ChatPromptTemplate.fromMessages([
           ['system', `You are evaluating whether these web application specs are clear enough
 for a test automation step planner to generate accurate click-level test steps from them.
 
 A good spec:
-- Says specifically what the page/element does, not just describes it
-- Contains enough context that a tester could write a step without seeing the actual UI
-- Avoids vague descriptions like "a button" or "shows content"
+- Page intent names what the user does AND what page comes before/after
+- Page precondition describes what must be true before arrival
+- Page expectedOutcome describes what the tester should observe after all actions complete
+- Element description is SPECIFIC: names options for selects, gives example values for textboxes,
+  states business meaning for checkboxes, names what a button triggers
+- Element expectedOutcome describes the visible change after interaction
+- Avoids vague descriptions like "a button", "shows content", "allows user to select"
 
 Rate the overall spec quality 0–100 and recommend one of:
 - ready: step planner can use these as-is
-- review_required: some specs need human correction first
-- recrawl_recommended: spec quality too low, re-crawl needed`],
+- review_required: some specs need human correction first (minor gaps)
+- recrawl_recommended: spec quality too low, re-crawl needed (most specs are vague or missing)`],
           ['human', `Page specs:\n{nodeSpecs}\n\nElement specs:\n{elemSpecs}`],
         ])
 
