@@ -20,6 +20,7 @@ export interface PlanRunReq {
   tc_name:     string
   description: string
   java_dir:    string
+  steps?:      import('../types').RawTestCaseStep[]
 }
 
 export interface SavePlanReq {
@@ -83,9 +84,13 @@ export const api = createApi({
       query: (body) => ({ url: '/plan/load-excel', method: 'POST', body }),
     }),
 
-    planRun: build.mutation<unknown, PlanRunReq>({
+    planRun: build.mutation<{ job_id?: string; tc_id?: string; status?: string }, PlanRunReq>({
       query: (body) => ({ url: '/plan/run', method: 'POST', body }),
       invalidatesTags: ['TestCases'],
+    }),
+
+    getPlanStatus: build.query<{ status: string; steps?: unknown[]; confidence?: number; parameters?: unknown[]; review_reason?: string; class_name?: string; method_name?: string }, string>({
+      query: (jobId) => `/plan/status/${encodeURIComponent(jobId)}`,
     }),
 
     savePlan: build.mutation<unknown, SavePlanReq>({
@@ -143,4 +148,5 @@ export const {
   useExecuteRunMutation,
   useGetRunResultsQuery,
   useGetRunsQuery,
+  useLazyGetPlanStatusQuery,
 } = api

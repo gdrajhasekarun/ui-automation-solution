@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, FastAPI
 
 from config import DASHBOARD_URL, JAVA_DIR, PORT, REPO_ROOT, SHARED_DIR
 from pom_generator_v2 import generate_all_v2, update_incrementally_v2, output_subdir, file_extension
+from pom_registry import generate_registry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("generator-service")
@@ -63,6 +64,8 @@ async def _run_generation_v2(job_id: str, app_id: str, trigger_type: str, framew
         else:
             result = generate_all_v2(graph_path, pages_dir, target_tool)
         _jobs[job_id]["classes_written"] = result.get("count", 0)
+        generate_registry(graph_path, base_dir)
+        await _notify(app_id, "GENERATOR", "POM registry generated")
 
         validation_failures: dict = result.get("validation_failures", {})
         if validation_failures:

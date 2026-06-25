@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
+import tempfile
+from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +23,8 @@ from v3_ai_router import router as v3_ai_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("dashboard")
+
+_SHARED_DIR = os.environ.get("SHARED_DIR", os.path.join(os.path.dirname(__file__), "../../shared"))
 
 
 @asynccontextmanager
@@ -160,6 +163,20 @@ async def plan_load_excel(body: dict):
         return {"status": "ERROR", "detail": str(e)}
 
 
+@app.post("/api/plan/upload-excel")
+async def plan_upload_excel(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{PLANNER_URL}/plan/load-excel", json={"excel_path": tmp_path})
+            return resp.json()
+    except Exception as e:
+        return {"status": "ERROR", "detail": str(e)}
+
+
 @app.post("/api/plan/run")
 async def plan_run(body: PlanRunBody):
     tc_id = "tc-" + uuid.uuid4().hex[:8]
@@ -176,7 +193,8 @@ async def plan_run(body: PlanRunBody):
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(f"{PLANNER_URL}/plan/run", json={
                 "app_id": body.app_id, "tc_name": body.tc_name,
-                "description": body.description, "java_dir": body.java_dir
+                "description": body.description, "java_dir": body.java_dir,
+                "steps": [s.model_dump() for s in body.steps],
             })
             data = resp.json()
     except Exception as e:
@@ -184,6 +202,71 @@ async def plan_run(body: PlanRunBody):
         return {"tc_id": tc_id, "status": "ERROR", "detail": str(e)}
 
     return {"tc_id": tc_id, "job_id": data.get("job_id"), "status": "STARTED"}
+
+
+@app.get("/api/plan/status/{job_id}")
+async def plan_status(job_id: str):
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{PLANNER_URL}/status/{job_id}")
+            return resp.json()
+    except Exception as e:
+        return {"job_id": job_id, "status": "error", "detail": str(e)}
+
+
+def _tc_json_path(app_id: str) -> str:
+    return os.path.join(_SHARED_DIR, "outputs", app_id, "test_cases.json")
+
+
+def _load_tc_json(app_id: str) -> dict:
+    path = _tc_json_path(app_id)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_tc_json(app_id: str, records: dict):
+    path = _tc_json_path(app_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(records, f, indent=2)
+
+
+@app.post("/api/plan/save")
+async def plan_save(body: dict):
+    app_id = body.get("app_id", "")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{PLANNER_URL}/plan/save", json=body)
+            data = resp.json()
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+    now = datetime.now(timezone.utc).isoformat()
+    records = _load_tc_json(app_id)
+    for entry in data.get("saved", []):
+        tc_name = entry.get("tc_name", "")
+        existing = records.get(tc_name, {})
+        records[tc_name] = {
+            **existing,
+            "tc_name":       tc_name,
+            "app_id":        app_id,
+            "status":        entry.get("status", "READY"),
+            "confidence":    entry.get("confidence", 0),
+            "file_path":     entry.get("file_path", ""),
+            "class_name":    entry.get("class_name", ""),
+            "method_name":   entry.get("method_name", ""),
+            "parameters":    entry.get("parameters", []),
+            "review_reason": entry.get("review_reason", ""),
+            "updated_at":    now,
+            "created_at":    existing.get("created_at", now),
+        }
+    _save_tc_json(app_id, records)
+    return data
 
 
 @app.post("/api/plan/callback")
@@ -266,12 +349,8 @@ async def execute_results(body: ExecuteResultsBody):
 
 @app.get("/api/test-cases/{app_id}")
 def get_test_cases(app_id: str):
-    rows = db_list("test_cases", "app_id = ?", [app_id], limit=500)
-    for r in rows:
-        try:
-            r["parameters"] = json.loads(r.get("parameters") or "[]")
-        except Exception:
-            r["parameters"] = []
+    records = _load_tc_json(app_id)
+    rows = sorted(records.values(), key=lambda r: r.get("created_at", ""), reverse=True)
     return {"test_cases": rows}
 
 
@@ -292,8 +371,6 @@ def get_run_results(run_id: str):
     results = db_list("test_results", "run_id = ?", [run_id], limit=500)
     return {"results": results}
 
-
-_SHARED_DIR = os.environ.get("SHARED_DIR", os.path.join(os.path.dirname(__file__), "../../shared"))
 
 @app.get("/api/graph/{app_id}")
 def get_graph(app_id: str):

@@ -230,9 +230,19 @@ def _patch_page_ref_names(local_path: str, raw: dict, normalized_nodes: list) ->
 
 def _infer_action_type(el: dict) -> str:
     """Infer V2-style actionType from a V3 element's role/tag/type fields."""
+    et   = (el.get("elementType") or "").lower()
     role = (el.get("role") or "").lower()
     tag  = (el.get("tag")  or "").lower()
-    typ  = (el.get("type") or "").lower()
+    # flow-crawler stores input type as "inputType"; fall back to legacy "type"
+    typ  = (el.get("type") or el.get("inputType") or "").lower()
+
+    # elementType from flow-crawler is authoritative
+    if et == "textbox":             return "fill"
+    if et in ("select", "combobox"): return "select"
+    if et == "link":                return "link"
+    if et == "button":              return "click"
+    if et == "checkbox" or et == "radio": return "check"
+
     if role == "checkbox" or typ == "checkbox":
         return "check"
     if role in ("combobox", "listbox") or tag == "select":
@@ -298,6 +308,7 @@ def _normalize_v3_graph(raw: dict) -> dict:
                     "role":          el.get("role", "") or el.get("tag", ""),
                     "name":          el.get("label") or el.get("inferredName") or el.get("name") or "",
                     "selectorKey":   _selector_from_element(el),
+                    "elementType":   el.get("elementType", ""),
                     "actionType":    el.get("actionType") or _infer_action_type(el),
                     "tag":           el.get("tag", ""),
                     "inputType":     el.get("inputType") or el.get("type") or "",

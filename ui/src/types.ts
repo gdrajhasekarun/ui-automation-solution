@@ -83,10 +83,17 @@ export interface TestRun {
   started_at?: string
 }
 
+export interface RawTestCaseStep {
+  number?: string | number
+  step?: string
+  expected?: string
+}
+
 export interface RawTestCase {
   tc_name?: string
   name?: string
   description?: string
+  steps?: RawTestCaseStep[]
 }
 
 export interface PlanResult {
@@ -106,4 +113,9 @@ export interface PlanStep {
   action?: string
   params?: string[]
   parameters?: string[]
+  humanReadable?: string
+  excelStepRef?: number
+  // LLM may also return camelCase variants
+  pageClass?: string
+  methodName?: string
 }

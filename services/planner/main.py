@@ -50,7 +50,7 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
         pass
 
 
-async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, java_dir: str):
+async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, java_dir: str, steps: list = []):
     _jobs[job_id]["status"] = "running"
     try:
         await _notify(app_id, "PLANNER", f"Planning {tc_name}")
@@ -64,7 +64,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
         with open(reg_path) as f:
             registry = json.load(f)
 
-        result = await plan(tc_name, description, graph, registry)
+        result = await plan(tc_name, description, graph, registry, steps)
         confidence = result.get("confidence", 0)
         status = result.get("status", "NEEDS_REVIEW")
 
@@ -79,7 +79,10 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             "planner_status": status,
             "file_path": file_path,
             "review_reason": result.get("review_reason", ""),
-            "parameters": result.get("parameters", [])
+            "parameters": result.get("parameters", []),
+            "steps": result.get("steps", []),
+            "class_name": result.get("startingClass", ""),
+            "method_name": result.get("testMethodName", ""),
         })
 
         await _notify(app_id, "PLANNER",
@@ -87,6 +90,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
         await _notify(app_id, "PLANNER_RESULT", json.dumps({
             "tc_name": tc_name, "status": status, "confidence": confidence,
             "file_path": file_path, "parameters": result.get("parameters", []),
+            "steps": result.get("steps", []),
             "review_reason": result.get("review_reason", ""),
             "method_name": result.get("testMethodName", ""),
             "class_name": result.get("startingClass", "").replace("Page","") + "Tests"
@@ -117,17 +121,48 @@ async def load_excel(body: dict):
 
 @app.post("/plan/run")
 async def plan_run(body: dict, background_tasks: BackgroundTasks):
-    app_id = body["app_id"]
-    tc_name = body["tc_name"]
+    app_id      = body["app_id"]
+    tc_name     = body["tc_name"]
     description = body.get("description", "")
-    java_dir = body.get("java_dir", JAVA_DIR)
+    java_dir    = body.get("java_dir", JAVA_DIR)
+    steps       = body.get("steps", [])
 
     job_id = "job-" + uuid.uuid4().hex[:8]
     _jobs[job_id] = {"status": "started", "tc_name": tc_name}
 
-    logger.info(f"Planner activated — planning {tc_name}")
-    background_tasks.add_task(_run_plan, job_id, app_id, tc_name, description, java_dir)
+    logger.info(f"Planner activated — planning {tc_name} ({len(steps)} steps)")
+    background_tasks.add_task(_run_plan, job_id, app_id, tc_name, description, java_dir, steps)
     return {"job_id": job_id, "status": "STARTED"}
+
+
+@app.post("/plan/save")
+async def plan_save(body: dict):
+    app_id   = body.get("app_id", "")
+    java_dir = body.get("java_dir", JAVA_DIR)
+    saved: list = []
+    for tc in body.get("test_cases", []):
+        result      = tc.get("result") or {}
+        tc_name     = tc.get("tc_name", "")
+        description = (result.get("description") or tc_name) if isinstance(result, dict) else tc_name
+        confidence  = result.get("confidence", 0) if isinstance(result, dict) else 0
+        status      = result.get("status", "NEEDS_REVIEW") if isinstance(result, dict) else "NEEDS_REVIEW"
+        file_path   = ""
+        if isinstance(result, dict) and confidence >= 0.75:
+            try:
+                file_path = generate(result, app_id, java_dir, description)
+            except Exception as e:
+                logger.error(f"generate() failed for {tc_name}: {e}")
+        saved.append({
+            "tc_name":       tc_name,
+            "status":        status,
+            "confidence":    confidence,
+            "file_path":     file_path,
+            "class_name":    result.get("startingClass", "") if isinstance(result, dict) else "",
+            "method_name":   result.get("testMethodName", "") if isinstance(result, dict) else "",
+            "parameters":    result.get("parameters", []) if isinstance(result, dict) else [],
+            "review_reason": result.get("review_reason", "") if isinstance(result, dict) else "",
+        })
+    return {"status": "ok", "saved": saved}
 
 
 @app.post("/plan/run-batch")

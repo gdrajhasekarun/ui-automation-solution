@@ -1,29 +1,17 @@
 import React, { useState } from 'react'
-import { Button, Input, Typography, Table, Checkbox, Tag } from 'antd'
+import { Button, Upload, Typography, Table, Checkbox, Tag, message } from 'antd'
+import { InboxOutlined } from '@ant-design/icons'
 import type { CheckboxChangeEvent } from 'antd/es/checkbox'
 import type { TableColumnsType } from 'antd'
+import type { UploadFile } from 'antd/es/upload'
 import { useTheme } from '../theme'
 import { useAppSelector } from '../store'
-import { useLoadExcelMutation, usePlanRunMutation, useSavePlanMutation } from '../store/api'
-import type { RawTestCase, PlanResult, PlanStep } from '../types'
+import { usePlanRunMutation, useSavePlanMutation, useLazyGetPlanStatusQuery } from '../store/api'
+import type { RawTestCase, RawTestCaseStep, PlanResult, PlanStep, Parameter } from '../types'
 
 const { Text } = Typography
 
-function esc(s: string) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
 
-function buildCodeHtml(steps: PlanStep[], muted: string) {
-  if (!steps.length) return ''
-  const cls = steps[0].page_class ?? 'Page'
-  let out = `new <span style="color:#ffa657">${esc(cls)}</span><span style="color:${muted}">(</span>driver<span style="color:${muted}">)</span>`
-  steps.forEach(s => {
-    const method = s.method ?? s.action ?? ''
-    const args   = (Array.isArray(s.params) ? s.params : Array.isArray(s.parameters) ? s.parameters : []).map(esc).join(', ')
-    out += `\n    .<span style="color:#58A6FF">${esc(method)}</span><span style="color:${muted}">(</span>${args}<span style="color:${muted}">)</span>`
-  })
-  return out + ';'
-}
 
 function ConfBadge({ conf }: { conf?: number | null }) {
   if (conf == null) return null
@@ -62,8 +50,9 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
 
   const [step, setStep]                   = useState(1)
-  const [excelPath, setExcelPath]         = useState('')
   const [loadError, setLoadError]         = useState('')
+  const [loadingExcel, setLoadingExcel]   = useState(false)
+  const [fileList, setFileList]           = useState<UploadFile[]>([])
   const [tcs, setTcs]                     = useState<RawTestCase[]>([])
   const [selectedKeys, setSelectedKeys]   = useState<number[]>([])
   const [planned, setPlanned]             = useState<Record<string, Planned>>({})
@@ -71,26 +60,43 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
   const [saveError, setSaveError]         = useState('')
   const [savedFiles, setSavedFiles]       = useState<{ cls: string; names: string[] }[]>([])
 
-  const [loadExcel,  { isLoading: loadingExcel }] = useLoadExcelMutation()
-  const [planRun]                                  = usePlanRunMutation()
-  const [savePlan]                                 = useSavePlanMutation()
+  const [planRun]          = usePlanRunMutation()
+  const [savePlan]         = useSavePlanMutation()
+  const [fetchPlanStatus]  = useLazyGetPlanStatusQuery()
 
   const selectedTcs   = selectedKeys.map(i => tcs[i]).filter(Boolean)
   const selectedNames = selectedTcs.map(tc => tc.tc_name ?? tc.name ?? '')
 
   // ── Step 1 ────────────────────────────────────────────────────────────────
-  const doLoadExcel = async () => {
+  const doUploadExcel = async (file: File) => {
     setLoadError('')
-    if (!excelPath.trim()) { setLoadError('Please enter an Excel file path.'); return }
+    setLoadingExcel(true)
     try {
-      const resp = await loadExcel({ excel_path: excelPath.trim() }).unwrap()
-      setTcs(resp.test_cases ?? [])
+      const form = new FormData()
+      form.append('file', file)
+      const resp = await fetch('/api/plan/upload-excel', { method: 'POST', body: form })
+      const data = await resp.json()
+      if (data.status === 'ERROR') throw new Error(data.detail ?? 'Failed to load')
+      setTcs(data.test_cases ?? [])
       setSelectedKeys([])
     } catch (e: unknown) {
-      const err = e as { data?: { detail?: string }; error?: string }
-      setLoadError(err?.data?.detail ?? err?.error ?? 'Failed to load')
+      const err = e as Error
+      setLoadError(err?.message ?? 'Failed to load')
+      message.error('Failed to parse Excel file')
+    } finally {
+      setLoadingExcel(false)
     }
+    return false // prevent antd auto-upload
   }
+
+  const stepsCols: TableColumnsType<RawTestCaseStep & { _k: number }> = [
+    { title: '#', dataIndex: 'number', width: 36,
+      render: (v: unknown) => <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted }}>{String(v ?? '')}</span> },
+    { title: 'Step', dataIndex: 'step',
+      render: (v: unknown) => <span style={{ fontSize: 12, color: C.text }}>{String(v ?? '')}</span> },
+    { title: 'Expected Result', dataIndex: 'expected',
+      render: (v: unknown) => <span style={{ fontSize: 12, color: C.muted }}>{String(v ?? '')}</span> },
+  ]
 
   const step1Cols: TableColumnsType<RawTestCase & { _i: number }> = [
     {
@@ -123,20 +129,62 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
         <Text style={{ color: C.muted, fontSize: 12 }}>{row.description ?? ''}</Text>
       ),
     },
+    {
+      title: 'Steps',
+      width: 60,
+      render: (_: unknown, row: RawTestCase & { _i: number }) => (
+        <Tag style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}>{(row.steps ?? []).length}</Tag>
+      ),
+    },
   ]
 
   // ── Step 2 ────────────────────────────────────────────────────────────────
   const runPlanner = async () => {
     setPlanRunning(true)
+    // Clear all selected TCs immediately so stale results don't show
+    setPlanned(prev => {
+      const next = { ...prev }
+      selectedTcs.forEach(tc => {
+        const name = tc.tc_name ?? tc.name ?? ''
+        next[name] = { status: 'not_started', result: null, error: null }
+      })
+      return next
+    })
     for (const tc of selectedTcs) {
       const name = tc.tc_name ?? tc.name ?? ''
       setPlanned(prev => ({ ...prev, [name]: { status: 'in_progress', result: null, error: null } }))
       try {
-        const result = await planRun({ app_id: appId, tc_name: name, description: tc.description ?? '', java_dir: frameworkDir }).unwrap() as PlanResult
-        setPlanned(prev => ({ ...prev, [name]: { status: 'complete', result, error: null } }))
+        await planRun({ app_id: appId, tc_name: name, description: tc.description ?? '', java_dir: frameworkDir, steps: tc.steps ?? [] }).unwrap()
+
+        // Wait for PLANNER_RESULT via SSE — use since=now so we don't replay old events
+        await new Promise<void>((resolve, reject) => {
+          const since = new Date().toISOString()
+          const sse = new EventSource(`/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
+          const timer = setTimeout(() => { sse.close(); reject(new Error('Timed out waiting for planner result')) }, 120000)
+          sse.onmessage = (ev) => {
+            try {
+              const event = JSON.parse(ev.data)
+              if (event.stage !== 'PLANNER_RESULT') return
+              const payload = JSON.parse(event.message)
+              if ((payload.tc_name ?? '') !== name) return
+              clearTimeout(timer)
+              sse.close()
+              const result: PlanResult = {
+                steps:         (payload.steps ?? []) as PlanStep[],
+                parameters:    (payload.parameters ?? []) as Parameter[],
+                confidence:    payload.confidence,
+                class_name:    payload.class_name,
+                review_reason: payload.review_reason,
+              }
+              setPlanned(prev => ({ ...prev, [name]: { status: 'complete', result, error: null } }))
+              resolve()
+            } catch { /* ignore non-JSON events */ }
+          }
+          sse.onerror = () => { clearTimeout(timer); sse.close(); reject(new Error('SSE connection error')) }
+        })
       } catch (e: unknown) {
-        const err = e as { data?: { detail?: string }; error?: string }
-        setPlanned(prev => ({ ...prev, [name]: { status: 'failed', result: null, error: err?.data?.detail ?? err?.error ?? 'Failed' } }))
+        const err = e as { data?: { detail?: string }; error?: string; message?: string }
+        setPlanned(prev => ({ ...prev, [name]: { status: 'failed', result: null, error: err?.data?.detail ?? err?.error ?? err?.message ?? 'Failed' } }))
       }
     }
     setPlanRunning(false)
@@ -181,13 +229,24 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
         <div>
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 20px', marginBottom: 16 }}>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 16 }}>Load Test Cases</div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Excel Path</div>
-                <Input value={excelPath} onChange={e => setExcelPath(e.target.value)} placeholder="./test-cases.xlsx" style={{ width: 320 }} onPressEnter={doLoadExcel} />
-              </div>
-              <Button type="primary" loading={loadingExcel} onClick={doLoadExcel}>Load Test Cases</Button>
-            </div>
+            <Upload.Dragger
+              accept=".xlsx,.xls"
+              fileList={fileList}
+              beforeUpload={file => { setFileList([file]); doUploadExcel(file); return false }}
+              onRemove={() => { setFileList([]); setTcs([]); setSelectedKeys([]) }}
+              maxCount={1}
+              showUploadList={{ showRemoveIcon: true }}
+              style={{ background: C.surface2, borderColor: C.border }}
+            >
+              {loadingExcel
+                ? <p style={{ color: C.muted, fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>Parsing…</p>
+                : <>
+                    <p className="ant-upload-drag-icon"><InboxOutlined style={{ color: C.blue, fontSize: 40 }} /></p>
+                    <p style={{ color: C.text, fontFamily: "'IBM Plex Mono',monospace", fontSize: 13 }}>Click or drag an Excel file here</p>
+                    <p style={{ color: C.muted, fontSize: 12 }}>Expected columns: TestCaseName, Description</p>
+                  </>
+              }
+            </Upload.Dragger>
             {loadError && <div style={{ color: C.red, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", marginTop: 8 }}>{loadError}</div>}
           </div>
 
@@ -195,7 +254,18 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 20px' }}>
               <Table<RawTestCase & { _i: number }>
                 dataSource={tcs.map((tc, i) => ({ ...tc, _i: i, key: i }))}
-                columns={step1Cols} pagination={false} size="small" scroll={{ y: 300 }}
+                columns={step1Cols} pagination={false} size="small" scroll={{ y: 400 }}
+                expandable={{
+                  rowExpandable: row => (row.steps ?? []).length > 0,
+                  expandedRowRender: row => (
+                    <div style={{ padding: '8px 0 8px 40px' }}>
+                      <Table<RawTestCaseStep & { _k: number }>
+                        dataSource={(row.steps ?? []).map((s, k) => ({ ...s, _k: k, key: k }))}
+                        columns={stepsCols} pagination={false} size="small" showHeader
+                      />
+                    </div>
+                  ),
+                }}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
                 <Button type="primary" disabled={selectedKeys.length === 0} onClick={() => { setPlanned({}); setStep(2) }}>Next →</Button>
@@ -236,11 +306,53 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                   {status === 'failed'      && <span style={{ color: C.red, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace" }}>{p?.error}</span>}
                   {status === 'complete' && result && (
                     <>
-                      <div style={{ color: C.green, fontSize: 12, marginBottom: 10 }}>✓ Planned</div>
-                      {steps.length > 0 && (
-                        <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, lineHeight: 1.7, overflowX: 'auto', padding: '12px 16px', whiteSpace: 'pre', marginBottom: 10, color: C.text }}
-                          dangerouslySetInnerHTML={{ __html: buildCodeHtml(steps, C.muted) }} />
-                      )}
+                      <div style={{ color: C.green, fontSize: 12, marginBottom: 10 }}>✓ Planned — {steps.length} step{steps.length !== 1 ? 's' : ''}</div>
+                      {steps.length > 0 && (() => {
+                        // Group atomic steps by excelStepRef
+                        const groups: { ref: number; label: string; items: { s: PlanStep; i: number }[] }[] = []
+                        const refMap = new Map<number, typeof groups[0]>()
+                        steps.forEach((s, i) => {
+                          const ref = Number(s.excelStepRef ?? 0)
+                          if (!refMap.has(ref)) {
+                            const excelStep = tc.steps?.find(es => Number(es.number) === ref)
+                            const label = ref > 0
+                              ? `Step ${ref}${excelStep?.step ? ': ' + excelStep.step : ''}`
+                              : 'Steps'
+                            const g = { ref, label, items: [] as { s: PlanStep; i: number }[] }
+                            groups.push(g)
+                            refMap.set(ref, g)
+                          }
+                          refMap.get(ref)!.items.push({ s, i })
+                        })
+                        return (
+                          <div style={{ marginBottom: 10 }}>
+                            {groups.map(g => (
+                              <div key={g.ref} style={{ marginBottom: 12 }}>
+                                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '8px 12px 4px', background: C.surface, borderRadius: '6px 6px 0 0', border: `1px solid ${C.border}`, borderBottom: 'none' }}>
+                                  {g.label}
+                                </div>
+                                <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: '0 0 6px 6px', padding: '4px 12px' }}>
+                                  {g.items.map(({ s, i }, gi) => {
+                                    const desc   = s.humanReadable ?? s.action ?? s.pageClass ?? ''
+                                    const cls    = s.page_class ?? s.pageClass ?? ''
+                                    const method = s.method ?? s.methodName ?? ''
+                                    const rawArgs = Array.isArray(s.params) ? s.params : Array.isArray(s.parameters) ? s.parameters : []
+                                    const args   = rawArgs.join(', ')
+                                    const call   = cls && method ? `${cls}.${method}(${args})` : method ? `${method}(${args})` : ''
+                                    return (
+                                      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 0', borderBottom: gi < g.items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
+                                        <span style={{ minWidth: 22, color: C.muted, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, flexShrink: 0 }}>{i + 1}.</span>
+                                        <span style={{ flex: 1, fontSize: 13, color: C.text }}>{desc}</span>
+                                        {call && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.blue, whiteSpace: 'nowrap' }}>[{call}]</span>}
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
                       {params.length > 0 && (
                         <div style={{ fontSize: 12, color: C.muted, fontFamily: "'IBM Plex Mono',monospace" }}>
                           Parameters:{' '}

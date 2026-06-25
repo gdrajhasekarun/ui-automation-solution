@@ -17,11 +17,18 @@ class CrawlTriggerBody(BaseModel):
     framework_dir: str = ""
 
 
+class PlanRunStep(BaseModel):
+    number: Optional[str] = None
+    step: Optional[str] = None
+    expected: Optional[str] = None
+
+
 class PlanRunBody(BaseModel):
     app_id: str
     tc_name: str
     description: str = ""
     java_dir: str = ""
+    steps: list[PlanRunStep] = []
 
 
 class ExecuteRunBody(BaseModel):

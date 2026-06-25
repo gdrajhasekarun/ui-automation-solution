@@ -125,9 +125,12 @@ OUTPUT FIELDS PER PAGE:
   If an existing intent is provided, ENRICH it rather than discarding it.
   Example: "Appointment booking form where the user selects a facility, date and
   healthcare program after logging in; submitting navigates to the confirmation page."
-- precondition: what must be true before the user reaches this page (e.g. "user must
-  be logged in", "user must have selected a facility on the previous page"). Omit if
-  the page is a public entry point.
+- precondition: ALWAYS write a precondition — never omit it.
+  For public entry points that require no prior action write exactly:
+  "None — public entry point."
+  For all other pages describe what must have happened on the previous page
+  (e.g. "User must have logged in on the Login page" or
+  "User must have selected a facility on the Facility Selection page").
 - expectedOutcome: what the test agent should observe after completing all actions on
   this page (e.g. "confirmation page appears showing appointment ID and facility name").
 
@@ -194,6 +197,20 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
     inboundNames.get(edge.to)!.push(fromName)
   }
 
+  // Map elementId → destination page name for buttons/links that triggered navigation
+  const elemDestination = new Map<string, string>()
+  for (const edge of graphSnapshot.edges) {
+    if (edge.trigger?.elementId) {
+      const destNode = graphNodes[edge.to]
+      const destName = destNode?.pageRef ?? destNode?.title ?? edge.to
+      const existing = elemDestination.get(edge.trigger.elementId)
+      elemDestination.set(
+        edge.trigger.elementId,
+        existing ? `${existing} or "${destName}"` : `"${destName}"`,
+      )
+    }
+  }
+
   const appSummary = graphSnapshot.meta.summary ?? `A web application with ${Object.keys(graphNodes).length} pages`
 
   // Include crawl-notes so the LLM knows credentials, valid field values, and flow hints.
@@ -212,6 +229,9 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
   const FORM_TYPES = new Set(['textbox', 'textarea', 'select', 'combobox', 'checkbox', 'radio', 'button', 'submit'])
   const flowName = _config.flowName ?? 'general web app exploration'
 
+  const MAX_OPTS = 15
+  const NAVIGABLE_TYPES = new Set(['button', 'submit', 'link'])
+
   function buildPageInput(nodeId: string): string {
     const node = graphNodes[nodeId]
     const sorted = [
@@ -219,12 +239,35 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
       ...node.elements.filter(e => !FORM_TYPES.has(e.elementType)),
     ]
     const elemLines = sorted.slice(0, MAX_ELEMENTS_PER_NODE).map(e => {
-      const placeholder = e.placeholder ? ` placeholder="${e.placeholder}"` : ''
-      const options = e._selectOptions?.length ? ` options=[${e._selectOptions.slice(0, 5).join('|')}]` : ''
-      return `  id=${e.id} name="${e.name}" type=${e.elementType} label="${e.label ?? ''}"${placeholder}${options}`
+      const placeholder  = e.placeholder ? ` placeholder="${e.placeholder}"` : ''
+      const inputTypeStr = e.inputType    ? ` inputType=${e.inputType}`       : ''
+      const requiredStr  = e.required     ? ` required=true`                  : ''
+
+      let optStr = ''
+      if (e._selectOptions?.length) {
+        const opts = e._selectOptions
+        if (opts.length <= MAX_OPTS) {
+          optStr = ` options=[${opts.join('|')}]`
+        } else {
+          optStr = ` options=[${opts.slice(0, MAX_OPTS).join('|')}] (+${opts.length - MAX_OPTS} more)`
+        }
+      }
+
+      let destStr = ''
+      if (NAVIGABLE_TYPES.has(e.elementType)) {
+        const dest = elemDestination.get(e.id)
+        if (dest) destStr = ` → navigates to ${dest}`
+      }
+
+      return `  id=${e.id} name="${e.name}" type=${e.elementType} label="${e.label ?? ''}"${placeholder}${optStr}${inputTypeStr}${requiredStr}${destStr}`
     }).join('\n')
+
     const existingIntent = node.spec?.intent ? `\nexisting intent (enrich, do not discard): "${node.spec.intent}"` : ''
-    return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
+    const descriptionLine = (node.description && node.description !== node.title)
+      ? `\ndescription: ${node.description.slice(0, 300)}`
+      : ''
+
+    return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}${descriptionLine}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
   }
 
   function buildNavContext(nodeIds: string[]): string {

@@ -30,6 +30,7 @@ public class {class_name} {{
         WebDriverManager.chromedriver().setup();
         driver = new ChromeDriver();
         driver.manage().window().maximize();
+        driver.get(System.getProperty("app.url", ""));
     }}
 
     @AfterMethod
@@ -56,12 +57,12 @@ def _build_method(planner_output: dict, description: str) -> str:
     final_assertion = planner_output.get("finalAssertion", {})
 
     param_decl = ", ".join(f"{p['type']} {p['name']}" for p in params)
-    param_str = ", ".join(p["name"] for p in params)
 
     low_conf_comment = ""
     if confidence < 0.75:
         low_conf_comment = f"    // WARNING: Low confidence ({confidence:.2f}) — verify this sequence manually\n"
 
+    steps = [s for s in steps if s.get("methodName", "").lower() != "launch"]
     chain_parts = []
     for step in steps:
         mname = step.get("methodName", "")
