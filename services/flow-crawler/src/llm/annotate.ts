@@ -10,6 +10,7 @@ import * as fs from 'fs'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import type { CrawlerGraph } from '../graph/index.js'
+import { deriveClassName } from '../graph/index.js'
 import type { Graph, CrawlerConfig } from '../types.js'
 import { AnnotationBatchSchema } from '../types.js'
 import { log } from '../logger.js'
@@ -29,7 +30,7 @@ export async function annotateGraph(
   const prevSpecByFingerprint = new Map<string, { intent?: string; expectedOutcome?: string; precondition?: string }>()
   const prevElemSpecBySelector = new Map<string, { description: string; expectedOutcome?: string }>()
   if (previousGraph) {
-    for (const node of Object.values(previousGraph.nodes)) {
+    for (const [nodeId, node] of Object.entries(previousGraph.nodes)) {
       if (node.fingerprint && node.spec?.intent) {
         prevSpecByFingerprint.set(node.fingerprint, {
           intent:          node.spec.intent,
@@ -95,7 +96,7 @@ export async function annotateGraph(
           generatedAt:     now,
         },
         elements: updatedElements,
-      })
+      } as Partial<import('../types.js').Node>)
       continue
     }
     toAnnotate.push({ nodeId, fingerprint: node.fingerprint ?? '' })
@@ -199,6 +200,8 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
 
   // Map elementId → destination page name for buttons/links that triggered navigation
   const elemDestination = new Map<string, string>()
+  // Map nodeId → human-readable arrival steps (fill values + click) from inbound edges
+  const arrivalSteps = new Map<string, string[]>()
   for (const edge of graphSnapshot.edges) {
     if (edge.trigger?.elementId) {
       const destNode = graphNodes[edge.to]
@@ -208,6 +211,23 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
         edge.trigger.elementId,
         existing ? `${existing} or "${destName}"` : `"${destName}"`,
       )
+    }
+    // Build arrival context from prerequisiteActions on this edge
+    const prereqs = edge.trigger?.prerequisiteActions
+    if (prereqs?.length || edge.trigger?.elementId) {
+      const steps: string[] = []
+      if (prereqs?.length) {
+        for (const p of prereqs) {
+          steps.push(`fill "${p.elementName ?? p.elementId}" = "${p.value ?? '?'}" (source: ${p.source})`)
+        }
+      }
+      if (edge.trigger?.elementName) {
+        steps.push(`click "${edge.trigger.elementName}"`)
+      }
+      if (steps.length) {
+        if (!arrivalSteps.has(edge.to)) arrivalSteps.set(edge.to, [])
+        arrivalSteps.get(edge.to)!.push(steps.join(' → '))
+      }
     }
   }
 
@@ -266,8 +286,12 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
     const descriptionLine = (node.description && node.description !== node.title)
       ? `\ndescription: ${node.description.slice(0, 300)}`
       : ''
+    const arrivals = arrivalSteps.get(nodeId)
+    const arrivalLine = arrivals?.length
+      ? `\narrived via: ${arrivals.join(' OR ')}`
+      : ''
 
-    return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}${descriptionLine}\npageRef: ${node.pageRef ?? ''}${existingIntent}\nelements:\n${elemLines}`
+    return `nodeId: ${nodeId}\nurl: ${node.url}\ntitle: ${node.title}${descriptionLine}\npageRef: ${node.pageRef ?? ''}${arrivalLine}${existingIntent}\nelements:\n${elemLines}`
   }
 
   function buildNavContext(nodeIds: string[]): string {
@@ -342,5 +366,90 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
     }
   }
 
+  // Derive className deterministically from pageRef — no LLM call needed
+  const finalNodes = graph.toJSON().nodes
+  for (const [id, node] of Object.entries(finalNodes)) {
+    const pageRef = node.pageRef ?? node.title ?? ''
+    graph.updateNode(id, { className: deriveClassName(pageRef) })
+  }
+
+  await annotateEdges(graph, fastLLM, graphSnapshot)
+
   graph.setAnnotatedAt(new Date().toISOString())
+}
+
+async function annotateEdges(
+  graph: CrawlerGraph,
+  fastLLM: BaseChatModel,
+  graphSnapshot: ReturnType<CrawlerGraph['toJSON']>,
+): Promise<void> {
+  const graphNodes = graphSnapshot.nodes
+  const EDGE_BATCH_SIZE = 8
+
+  // Collect edges that need annotation
+  const toAnnotate = graphSnapshot.edges.filter(e => !e.spec?.intent || !e.spec.userEdited)
+  if (toAnnotate.length === 0) {
+    log.info('ANNOTATE', 'All edges already have spec.intent — skipping edge annotation')
+    return
+  }
+  log.info('ANNOTATE', `Annotating ${toAnnotate.length} edges (${Math.ceil(toAnnotate.length / EDGE_BATCH_SIZE)} batches)`)
+
+  const EdgeAnnotationSchema = {
+    type: 'object',
+    properties: {
+      edges: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            edgeId: { type: 'string' },
+            intent: { type: 'string' },
+          },
+          required: ['edgeId', 'intent'],
+        },
+      },
+    },
+    required: ['edges'],
+  }
+
+  const edgePrompt = ChatPromptTemplate.fromMessages([
+    ['system', `You are annotating navigation edges in a web app graph for a TEST PLANNER.
+Each edge represents a user action (filling fields + clicking a button/link) that transitions between pages.
+Write a single sentence for each edge describing: what the user does and why (what they are trying to accomplish).
+Be specific — name the fields filled and the destination page.
+Example: "Fills the HCPCS code field with a procedure code and clicks Search Fees to retrieve the physician fee schedule results."
+Return ONLY valid JSON: {{ "edges": [{{ "edgeId": "...", "intent": "..." }}] }}`],
+    ['human', `{edges}`],
+  ])
+
+  const structured = (fastLLM as any).withStructuredOutput(EdgeAnnotationSchema)
+  const edgeChain = edgePrompt.pipe(structured)
+
+  function buildEdgeInput(edge: (typeof graphSnapshot.edges)[0]): string {
+    const fromNode = graphNodes[edge.from]
+    const toNode   = graphNodes[edge.to]
+    const fromRef  = fromNode?.pageRef ?? fromNode?.title ?? edge.from
+    const toRef    = toNode?.pageRef   ?? toNode?.title   ?? edge.to
+    const fromIntent = fromNode?.spec?.intent ? `from page: "${fromRef}" (${fromNode.spec.intent})` : `from page: "${fromRef}"`
+    const toIntent   = toNode?.spec?.intent   ? `to page: "${toRef}" (${toNode.spec.intent})`       : `to page: "${toRef}"`
+    const prereqs = (edge.trigger.prerequisiteActions ?? [])
+      .map(p => `fill "${p.elementName ?? p.elementId}" (${p.elementType})`)
+      .join(', ')
+    const click = `click "${edge.trigger.elementName ?? edge.trigger.elementId}" (${edge.trigger.semanticType ?? edge.trigger.type})`
+    return `edgeId: ${edge.id}\n${fromIntent}\n${toIntent}\nactions: ${prereqs ? prereqs + ', then ' : ''}${click}`
+  }
+
+  for (let i = 0; i < toAnnotate.length; i += EDGE_BATCH_SIZE) {
+    const batch = toAnnotate.slice(i, i + EDGE_BATCH_SIZE)
+    const input = batch.map(buildEdgeInput).join('\n\n---\n\n')
+    const now   = new Date().toISOString()
+    try {
+      const result = await edgeChain.invoke({ edges: input }) as { edges: Array<{ edgeId: string; intent: string }> }
+      for (const { edgeId, intent } of result.edges) {
+        graph.updateEdge(edgeId, { spec: { intent, userEdited: false, generatedAt: now } })
+      }
+    } catch (err: any) {
+      log.warn('ANNOTATE', `Edge batch ${Math.floor(i / EDGE_BATCH_SIZE) + 1} failed: ${err.message?.slice(0, 120)}`)
+    }
+  }
 }

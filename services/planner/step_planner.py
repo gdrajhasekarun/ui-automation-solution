@@ -1,8 +1,7 @@
 import json
 import logging
 import os
-from typing import TypedDict, Annotated
-import operator
+from typing import TypedDict
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -10,8 +9,7 @@ from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger("planner.step_planner")
 
-SYSTEM_PROMPT = """You are a test automation expert. Resolve natural language test case descriptions
-into Selenium Page Object Model method sequences.
+SYSTEM_PROMPT = """You are a test automation expert. You are given a structured graph traversal of a web application and a set of test steps. Convert them into a Selenium Page Object Model method sequence.
 
 Return ONLY a valid JSON object. No markdown. No explanation. No ```json fences.
 
@@ -45,17 +43,17 @@ Return ONLY a valid JSON object. No markdown. No explanation. No ```json fences.
 }
 
 Rules:
-- The application launch (driver.get to the base URL) is handled automatically by @BeforeMethod — do NOT emit a launch step. Begin the test method steps from the first user interaction on the starting page.
-- The Excel Test Steps define the ORDERED GOALS. For each goal, trace the Application Graph to find which page and element satisfies it, then emit the corresponding POM method call(s).
-- Use each page's Intent description to identify which graph page matches each Excel step goal.
-- Follow navigation edges to move between pages — each edge traversal becomes a step.
-- Only use methods from the POM registry.
-- Add a humanReadable field per step describing what the step does in plain English.
-- Add an excelStepRef field (integer) to each step indicating which Excel step number it implements (1-based). Group multiple atomic steps under the same excelStepRef when they all contribute to the same Excel step goal.
-- When a path requires entering text or searching (e.g. a search box, keyword input, HCPC field), ALWAYS use a method that accepts a parameter (e.g. enterKeyword("value"), searchFor("value")) — never replace a search/input action with a pure click-navigation method.
-- Prefer methods with parameters over parameterless click methods when the step involves user input or data entry.
-- Last step must always be an assertion.
-- Never emit parent page methods when on a child page.
+- The application launch is handled automatically by @BeforeMethod — do NOT emit a launch step.
+- The graph is given as a list of edge blocks: [PageA → PageB] with an Intent line, FILL lines, and a CLICK line.
+- Match each test step's intent to the relevant edge block(s) in the graph.
+- For every matched edge block, emit ALL its FILL lines first (each as its own step), then the CLICK line.
+- FILL lines → hasParameter=true, isNavigation=false. parameterName = the field name in camelCase.
+- CLICK lines → hasParameter=false, isNavigation=true.
+- pageClass for each step = the left side of the edge block header (PageA from [PageA → PageB]).
+- Only use methodNames that appear exactly in the FILL/CLICK lines of the graph. Never invent method names.
+- CRITICAL: Only emit steps for edges that appear in the graph traversal. Do NOT invent steps for transitions not listed.
+- Every step MUST have both pageClass and methodName. Drop any step missing either.
+- Put assertion logic in finalAssertion. The last step in steps[] is the final user action.
 - testMethodName must be a valid Java identifier.
 - If path is unclear, still return JSON — reflect uncertainty in confidence."""
 
@@ -69,97 +67,194 @@ class PlannerState(TypedDict):
     raw_response: str
     result: dict
     error: str
+    llm_usage: dict
 
 
 _INPUT_TYPES = {"textbox", "input", "textarea", "select", "combobox", "radio", "checkbox"}
-_SKIP_LABELS = {
-    "here's how you know", "sign up", "enter your email address:",
-    "privacy settings", "help with file formats and plug-ins",
-    "rss feed link", "linkedin link", "youtube link", "facebook link", "twitter link",
-}
 
 
-def _build_graph_summary(graph: dict) -> str:
+def _build_registry_index(registry: list[dict]) -> tuple[dict[str, dict], dict[str, str]]:
+    sk_to_method: dict[str, dict] = {}
+    sk_to_class:  dict[str, str]  = {}
+    for m in registry:
+        sk = m.get("selectorKey", "")
+        if sk:
+            sk_to_method[sk] = m
+            sk_to_class[sk]  = m["className"]
+    return sk_to_method, sk_to_class
+
+
+def _build_pageref_class_map(
+    graph: dict, sk_to_class: dict[str, str]
+) -> tuple[dict[str, str], dict[str, int]]:
+    nodes = graph.get("nodes", {})
+    if isinstance(nodes, list):
+        nodes = {n.get("nodeId", str(i)): n for i, n in enumerate(nodes)}
+
+    sk_pageref_set: dict[str, set] = {}
+    for node in nodes.values():
+        pr = node.get("pageRef", "") or node.get("nodeId", "")
+        elements = node.get("elements") or node.get("ownElements") or []
+        for el in elements:
+            sk = el.get("_selector") or el.get("selectorKey") or el.get("interactionKey") or ""
+            if sk:
+                sk_pageref_set.setdefault(sk, set()).add(pr)
+    sk_page_count: dict[str, int] = {sk: len(prs) for sk, prs in sk_pageref_set.items()}
+
+    result: dict[str, str] = {}
+    for node in nodes.values():
+        page_ref = node.get("pageRef", "")
+        if not page_ref or page_ref in result:
+            continue
+        elements = node.get("elements") or node.get("ownElements") or []
+        scores: dict[str, int] = {}
+        for el in elements:
+            sk = el.get("_selector") or el.get("selectorKey") or el.get("interactionKey") or ""
+            if sk and sk in sk_to_class and sk_page_count.get(sk, 0) == 1:
+                cls = sk_to_class[sk]
+                scores[cls] = scores.get(cls, 0) + 1
+        if scores:
+            result[page_ref] = max(scores, key=lambda k: scores[k])
+    return result, sk_page_count
+
+
+def _build_edge_traversal(
+    graph: dict,
+    sk_to_method: dict[str, dict],
+    pageref_to_class: dict[str, str],
+) -> str:
+    """Deterministic BFS traversal of graph edges.
+    For each edge emits: [FromPage → ToPage], Intent, FILL lines, CLICK line.
+    Edge spec.intent (set at crawl-time) provides the intent label.
+    """
     raw_nodes = graph.get("nodes", {})
-    if isinstance(raw_nodes, dict):
-        nodes_iter = list(raw_nodes.items())
-        node_map: dict = raw_nodes
+    if isinstance(raw_nodes, list):
+        node_map: dict = {n.get("nodeId", str(i)): n for i, n in enumerate(raw_nodes)}
     else:
-        nodes_iter = [(n.get("nodeId", str(i)), n) for i, n in enumerate(raw_nodes)]
-        node_map = {n.get("nodeId", str(i)): n for i, n in enumerate(raw_nodes)}
+        node_map = raw_nodes
 
     edges = graph.get("edges", [])
 
-    # Pre-index outgoing edges per node
-    outgoing_edges: dict = {}
+    # Index: nodeId → list of outgoing edges
+    outgoing: dict[str, list] = {}
+    all_to_ids: set[str] = set()
     for e in edges:
-        from_id = e.get("from") or e.get("fromNodeId", "")
-        outgoing_edges.setdefault(from_id, []).append(e)
+        fid = e.get("from") or e.get("fromNodeId", "")
+        tid = e.get("to")   or e.get("toNodeId", "")
+        outgoing.setdefault(fid, []).append(e)
+        all_to_ids.add(tid)
+
+    # Root nodes: fromNodeIds that never appear as a toNodeId
+    all_from_ids = set(outgoing.keys())
+    root_ids = all_from_ids - all_to_ids
+    if not root_ids:
+        root_ids = all_from_ids  # fallback: no clear root, use all from-nodes
+
+    def _class_for_node(node: dict) -> str:
+        if node.get("className"):
+            cn = node["className"]
+            return cn if cn.endswith("Page") else cn + "Page"
+        pr = node.get("pageRef", "")
+        if pr and pr in pageref_to_class:
+            return pageref_to_class[pr]
+        return pr or node.get("nodeId", "Unknown")
+
+    def _node_els(node: dict) -> list:
+        els = node.get("elements") or node.get("ownElements") or []
+        return els if isinstance(els, list) else []
+
+    # elementId → selectorKey for a node
+    def _eid_to_sk(node: dict) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for el in _node_els(node):
+            eid = el.get("id") or el.get("elementId") or ""
+            sk  = el.get("_selector") or el.get("selectorKey") or el.get("interactionKey") or ""
+            if eid and sk:
+                result[eid] = sk
+        return result
+
+    def _method_sig(m: dict, cls: str, el_type: str = "") -> str:
+        params = list(m.get("parameterNames", []))
+        if not params and el_type in ("textbox", "input", "textarea"):
+            params = ["value"]
+        return f"{cls}.{m['methodName']}({', '.join(params)})"
 
     lines: list[str] = []
-    for nid, node in nodes_iter[:20]:
-        title    = node.get("title", node.get("url", ""))
-        page_ref = node.get("pageRef") or node.get("className", "")
-        intent   = node.get("spec", {}).get("intent", "") if isinstance(node.get("spec"), dict) else ""
-        lines.append(f"\n## Page: {title}")
-        lines.append(f"   POM class: {page_ref}")
-        if intent:
-            lines.append(f"   Purpose: {intent}")
+    seen_edge_pairs: set = set()
+    visited_queue = list(root_ids)
+    visited_nodes: set[str] = set(root_ids)
 
-        elements = node.get("elements", [])
-
-        # Collect trigger elementIds for outgoing edges from this node
-        trigger_el_ids: set = set()
-        for e in outgoing_edges.get(nid, []):
-            t = e.get("trigger", {})
-            if isinstance(t, dict) and t.get("elementId"):
-                trigger_el_ids.add(t["elementId"])
-
-        # Show only input fields and edge-trigger elements (skip nav/footer noise)
-        for el in elements:
-            el_type = (el.get("elementType") or el.get("role") or el.get("tag", "")).lower()
-            label   = (el.get("label") or el.get("name") or "").strip()
-            sel     = el.get("_selector") or el.get("selectorKey") or el.get("interactionKey", "")
-            el_id   = el.get("elementId", "")
-            if label.lower() in _SKIP_LABELS:
+    while visited_queue:
+        from_id = visited_queue.pop(0)
+        for e in outgoing.get(from_id, []):
+            to_id    = e.get("to") or e.get("toNodeId", "")
+            pair_key = (from_id, to_id)
+            if pair_key in seen_edge_pairs:
                 continue
-            if el_type in _INPUT_TYPES:
-                lines.append(f"   INPUT  [{el_type}] \"{label}\"  selector={sel}")
-            elif el_id in trigger_el_ids:
-                lines.append(f"   TRIGGER[{el_type}] \"{label}\"  selector={sel}")
+            seen_edge_pairs.add(pair_key)
 
-        # Describe each outgoing edge as an explicit FLOW block
-        for e in outgoing_edges.get(nid, []):
-            to_id      = e.get("to") or e.get("toNodeId", "")
-            dest       = node_map.get(to_id, {})
-            dest_title = dest.get("title", to_id) if isinstance(dest, dict) else to_id
-            dest_ref   = dest.get("pageRef", "") if isinstance(dest, dict) else ""
-            trigger    = e.get("trigger", {})
-            el_name    = (trigger.get("elementName") if isinstance(trigger, dict) else None) or e.get("label", "")
+            from_node  = node_map.get(from_id, {})
+            to_node    = node_map.get(to_id, {})
+            from_class = _class_for_node(from_node)
+            to_class   = _class_for_node(to_node)
 
-            # Input fields on this page that logically precede the trigger click
-            inputs_before = [
-                el for el in elements
-                if (el.get("elementType") or "").lower() in _INPUT_TYPES
-                and (el.get("label") or "").lower() not in _SKIP_LABELS
-            ]
+            # Intent from crawl-time spec, falling back to trigger element name
+            spec   = e.get("spec") or {}
+            intent = spec.get("intent") or ""
+            if not intent:
+                trigger = e.get("trigger", {})
+                intent  = (trigger.get("elementName") if isinstance(trigger, dict) else None) or e.get("label", "")
 
-            lines.append(f"   FLOW →")
-            step = 1
-            for inp in inputs_before:
-                inp_label = (inp.get("label") or inp.get("name") or "").strip()
-                inp_sel   = inp.get("_selector") or inp.get("selectorKey") or ""
-                lines.append(f"     {step}. Enter value in \"{inp_label}\" ({inp_sel}) — call the POM method for this field")
-                step += 1
-            lines.append(f"     {step}. Click \"{el_name}\" → navigates to: {dest_title}  (POM class: {dest_ref})")
+            lines.append(f"\n[{from_class} → {to_class}]")
+            if intent:
+                lines.append(f"Intent: {intent}")
 
-    return "\n".join(lines)[:7000]
+            # FILL lines from prerequisiteActions
+            trigger_dict = e.get("trigger", {}) if isinstance(e.get("trigger"), dict) else {}
+            prereqs      = trigger_dict.get("prerequisiteActions") or []
+            eid_to_sk    = _eid_to_sk(from_node)
+            edge_seen_sks: set[str] = set()
+
+            for pa in prereqs:
+                if pa.get("action") not in ("fill", "select"):
+                    continue
+                pa_eid  = pa.get("elementId", "")
+                pa_name = pa.get("elementName", "") or ""
+                pa_type = (pa.get("elementType") or "textbox").lower()
+                sk      = eid_to_sk.get(pa_eid, "")
+                if sk in edge_seen_sks:
+                    continue
+                edge_seen_sks.add(sk)
+                if sk and sk in sk_to_method:
+                    sig = _method_sig(sk_to_method[sk], from_class, pa_type)
+                else:
+                    synth = f"enter{''.join(w.capitalize() for w in pa_name.split())}"
+                    sig   = f"{from_class}.{synth}(value)"
+                lines.append(f'FILL  "{pa_name}" → {sig}')
+
+            # CLICK line — the edge trigger
+            trig_eid    = trigger_dict.get("elementId", "")
+            trig_name   = trigger_dict.get("elementName") or e.get("label", "")
+            trig_sk     = eid_to_sk.get(trig_eid, "")
+            if trig_sk and trig_sk in sk_to_method:
+                click_sig = _method_sig(sk_to_method[trig_sk], from_class)
+            else:
+                mname     = f"click{''.join(w.capitalize() for w in trig_name.split())}" if trig_name else "click"
+                click_sig = f"{from_class}.{mname}()"
+            lines.append(f'CLICK "{trig_name}" → {click_sig}')
+
+            # Enqueue toNode for BFS
+            if to_id not in visited_nodes:
+                visited_nodes.add(to_id)
+                visited_queue.append(to_id)
+
+    return "\n".join(lines)
 
 
 def _build_steps_summary(steps: list) -> str:
     if not steps:
         return ""
-    lines = ["Excel Test Steps — implement each step in order using graph paths and POM methods:"]
+    lines = ["Test Steps — match each step's intent to the corresponding edge block(s) in the graph:"]
     for s in steps:
         num      = s.get("number", "")
         action   = (s.get("step") or "").strip()
@@ -183,7 +278,6 @@ def _build_registry_summary(registry: list[dict], description: str) -> str:
     lines = []
     for _, e in top:
         attrs = e.get("allAttributes") or {}
-        # Build a compact label from the richest available attribute
         human_label = (
             attrs.get("ariaLabel") or attrs.get("placeholder") or
             attrs.get("ariaPlaceholder") or attrs.get("title") or
@@ -213,17 +307,27 @@ def _call_llm(state: PlannerState) -> PlannerState:
         f"Test Case Name: {state['tc_name']}\n"
         f"Description: {state['description']}"
         f"{steps_section}\n\n"
-        f"Application Graph (pages with specs, elements, navigation):\n{state['graph_summary']}\n\n"
+        f"Application Graph (edge traversal):\n{state['graph_summary']}\n\n"
         f"Available POM Methods:\n{state['registry_summary']}"
     )
     messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=user_content)]
     response = model.invoke(messages)
-    return {**state, "raw_response": response.content}
+    usage = getattr(response, "usage_metadata", {}) or {}
+    inp  = usage.get("input_tokens", 0)
+    out  = usage.get("output_tokens", 0)
+    cost = round((inp * 5 + out * 15) / 1_000_000, 6)
+    return {**state, "raw_response": str(response.content),
+            "llm_usage": {"inputTokens": inp, "outputTokens": out, "costUsd": cost, "model": "gpt-4o"}}
 
 
 def _parse_result(state: PlannerState) -> PlannerState:
     try:
         result = json.loads(state["raw_response"])
+        steps = result.get("steps", [])
+        valid = [s for s in steps if s.get("methodName") and s.get("pageClass")]
+        if len(valid) < len(steps):
+            logger.warning(f"Dropped {len(steps) - len(valid)} steps missing methodName/pageClass")
+            result["steps"] = valid
         return {**state, "result": result, "error": ""}
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse failed: {e} — raw: {state['raw_response'][:200]}")
@@ -238,7 +342,7 @@ def _parse_result(state: PlannerState) -> PlannerState:
         }, "error": str(e)}
 
 
-def _build_graph() -> StateGraph:
+def _build_graph():  # type: ignore[return]
     workflow = StateGraph(PlannerState)
     workflow.add_node("call_llm", _call_llm)
     workflow.add_node("parse_result", _parse_result)
@@ -248,7 +352,7 @@ def _build_graph() -> StateGraph:
     return workflow.compile()
 
 
-_planner_graph = None
+_planner_graph: object = None  # type: ignore[assignment]
 
 
 def _get_graph():
@@ -265,9 +369,13 @@ async def plan(
     registry: list[dict],
     steps: list = []
 ) -> dict:
-    graph_summary    = _build_graph_summary(graph)
+    sk_to_method, sk_to_class = _build_registry_index(registry)
+    pageref_to_class, _       = _build_pageref_class_map(graph, sk_to_class)
+    graph_summary    = _build_edge_traversal(graph, sk_to_method, pageref_to_class)
     registry_summary = _build_registry_summary(registry, description)
     steps_summary    = _build_steps_summary(steps)
+
+    logger.debug(f"Edge traversal for {tc_name}:\n{graph_summary}")
 
     initial_state: PlannerState = {
         "tc_name":          tc_name,
@@ -277,12 +385,14 @@ async def plan(
         "steps_summary":    steps_summary,
         "raw_response":     "",
         "result":           {},
-        "error": ""
+        "error":            "",
+        "llm_usage":        {},
     }
 
     planner = _get_graph()
-    final_state = await planner.ainvoke(initial_state)
+    final_state = await planner.ainvoke(initial_state)  # type: ignore[union-attr]
     result = final_state["result"]
+    result["llm_usage"] = final_state.get("llm_usage", {})
 
     if result.get("confidence", 0) < 0.75:
         result["status"] = "NEEDS_REVIEW"

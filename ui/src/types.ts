@@ -96,6 +96,15 @@ export interface RawTestCase {
   steps?: RawTestCaseStep[]
 }
 
+export interface PlanEvalDimension { score: number; notes: string }
+export interface PlanEval {
+  score: number
+  grade: string
+  evaluatedAt?: string
+  dimensions: Record<string, PlanEvalDimension>
+  flags: string[]
+}
+
 export interface PlanResult {
   steps?: PlanStep[]
   plan_steps?: PlanStep[]
@@ -105,6 +114,7 @@ export interface PlanResult {
   score?: number
   class_name?: string
   review_reason?: string
+  eval?: PlanEval
 }
 
 export interface PlanStep {

@@ -4,11 +4,11 @@ import type { CrawlerGraph } from '../graph/index.js'
 import type { ExcelData } from '../data/index.js'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { normalizeUrl, nodeId, pageFingerprint } from '../graph/index.js'
-import { capturePageElements, detectUILibrary, findNewElements, cleanupCrawlerAttrs } from '../capture/index.js'
+import { capturePageElements, detectUILibrary, findNewElements, cleanupCrawlerAttrs, getPageHeading } from '../capture/index.js'
 import { dispatch, safeClick, waitForIdle } from '../interaction/index.js'
 import { captureNewTab } from '../navigation/index.js'
 import { resolveValue } from '../data/index.js'
-import { filterElements, pickNextAction, namePageRef, predictRoutes } from '../llm/index.js'
+import { filterElements, pickNextAction, predictRoutes } from '../llm/index.js'
 import { CrawlDataCache } from '../cache/index.js'
 import { BranchQueue } from './branchQueue.js'
 import { PathManager } from './pathManager.js'
@@ -105,40 +105,35 @@ export async function runFromPage(
 
   // Register node if new — always store the FULL element set in the graph
   if (!graph.hasNode(id)) {
-    let pageRef = graph.registerPageRef(title)
-    let description: string | undefined
-    if (ctx.smartLLM) {
-      const meta = await namePageRef(title, url, allElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-      graph.incrementLLMCalls()
-      pageRef = graph.registerPageRef(meta.pageRef)
-      description = meta.description || undefined
-    }
+    const heading = await getPageHeading(page)
+    const pageRef = graph.registerPageRef(heading)
     graph.addNode(id, {
-      url, normalizedUrl: normUrl, title, pageRef, description,
+      url, normalizedUrl: normUrl, title, pageRef,
       fingerprint: fp, uiLibrary: library,
       elements: allElements, unfilledFields: [],
     })
   } else {
-    const existingNode = graph.getNode(id)
-    if (ctx.smartLLM && existingNode && !existingNode.description) {
-      // Backfill description for nodes that were created without one
-      const meta = await namePageRef(title, url, allElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-      graph.incrementLLMCalls()
-      graph.updateNode(id, { elements: allElements, description: meta.description || undefined })
-    } else {
-      graph.updateNode(id, { elements: allElements })
-    }
+    graph.updateNode(id, { elements: allElements })
   }
 
   // ── LLM element filter (Phase A only) ──────────────────────────────────────
   if (config.flowName && ctx.smartLLM && ctx.phaseBSteps.length === 0) {
     const before = elements.length
-    elements = await filterElements(elements, config.flowName, url, title, ctx.smartLLM)
-    log.info('FILTER', `LLM filter "${config.flowName}": ${before} → ${elements.length} elements kept`)
+
+    // Skip elements already promoted to globalElements — they are shared chrome (nav/header/footer)
+    // and are not flow-specific. Passing them to the LLM every page is redundant.
+    const knownGlobalIds = graph.globalElements
+    const nonGlobalElements = elements.filter(e => !knownGlobalIds.has(e.id))
+    const skippedCount = before - nonGlobalElements.length
+    if (skippedCount > 0) {
+      log.info('FILTER', `  Skipped ${skippedCount} global element(s) before LLM filter`)
+    }
+
+    elements = await filterElements(nonGlobalElements, config.flowName, url, title, ctx.smartLLM)
+    log.info('FILTER', `LLM filter "${config.flowName}": ${before} → ${elements.length} elements kept (${skippedCount} global skipped)`)
     elements.forEach((e, i) => {
       log.info('FILTER', `  [${String(i + 1).padStart(3)}] tag=${e.tag.padEnd(8)} type=${e.elementType.padEnd(8)} label="${e.name}"  selector=${e._selector}`)
     })
-    graph.incrementLLMCalls()
   }
 
   if (config.flowName && ctx.smartLLM) {
@@ -150,10 +145,14 @@ export async function runFromPage(
     let currentNodeId   = id   // advances to the latest wizard-step node as content changes
     let iterations = 0
     const MAX_SAME_PAGE_ITERS = 8
+    const actionPath: string[] = []          // human-readable steps taken so far (passed to pickNextAction)
+    let lastIntentCoverage = 0               // updated each pick, stored in eval
 
     while (iterations++ < MAX_SAME_PAGE_ITERS) {
       // Step 1: fill all form fields (including combobox/select dropdowns)
       const filledFieldLabels: string[] = []
+      type PrereqAction = NonNullable<import('../types.js').Edge['trigger']['prerequisiteActions']>[number]
+      const prerequisiteActions: PrereqAction[] = []
       const formFields = currentElements.filter(e =>
         e.elementType === 'textbox' || e.elementType === 'textarea' ||
         e.elementType === 'select'  || e.elementType === 'combobox'
@@ -276,10 +275,18 @@ export async function runFromPage(
           element.fillConfidence = fillResult.confidence
           log.step('INTERACT', `  → fill     "${element.name}"  value="${valueToFill}"  source=${fillResult.source}`)
           filledFieldLabels.push(element.name)
+          actionPath.push(`fill "${element.name}" = "${valueToFill}"`)
+          prerequisiteActions.push({
+            elementId:   element.id,
+            elementName: element.name ?? null,
+            elementType: element.elementType,
+            action:      (element.elementType === 'select' || element.elementType === 'combobox') ? 'select' : 'fill',
+            value:       valueToFill,
+            source:      fillResult.source ?? 'llm',
+          })
           await dispatch(page, element, currentElements, [element], library, config.headless, valueToFill)
           await waitForIdle(page)
-          if (fillResult.source === 'llm' || fillResult.source === 'excel') graph.incrementLLMCalls()
-          else if (fillResult.source === 'cache') graph.incrementCacheHits()
+          if (fillResult.source === 'cache') graph.incrementCacheHits()
         }
       }
 
@@ -301,17 +308,22 @@ export async function runFromPage(
         !disabledSelectors.includes((e.name ?? '').toLowerCase().slice(0, 60))
       )
       log.info('PICK', `  [iter ${iterations}] Asking LLM to pick next action from ${navCandidates.length} candidates for flow "${config.flowName}"`)
+      if (actionPath.length > 0) {
+        log.info('PICK', `  Steps completed so far:`)
+        actionPath.forEach((step, i) => log.info('PICK', `    ${String(i + 1).padStart(2)}. ${step}`))
+      }
       navCandidates.forEach((e, i) => {
         log.info('PICK', `    [${String(i + 1).padStart(3)}] ${e.elementType.padEnd(8)} "${e.name}"  selector=${e._selector}`)
       })
 
-      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM, filledFieldLabels)
-      graph.incrementLLMCalls()
+      const pick = await pickNextAction(navCandidates, config.flowName, page.url(), await page.title(), ctx.smartLLM, filledFieldLabels, actionPath)
 
       if (!pick) {
         log.info('PICK', `  LLM found no next action — flow complete or dead end`)
         break
       }
+      lastIntentCoverage = pick.intentCoverage
+      log.info('PICK', `  intentCoverage=${pick.intentCoverage}%  pathSteps=${actionPath.length}`)
 
       // Guard: stop only if the exact same element AND exact same page state recurs (true infinite loop)
       const elementSetFp = currentElements.map(e => e.id).sort().join(',')
@@ -323,6 +335,10 @@ export async function runFromPage(
       seenStateKeys.add(stateKey)
 
       log.step('PICK', `  LLM picked: "${pick.element.name}"  reason: ${pick.reason}`)
+      actionPath.push(`click "${pick.element.name}"`)
+
+      // Snapshot visible element IDs before interaction for elementDiff recording
+      const beforeInteractionIds = new Set(currentElements.filter(e => e.visible).map(e => e.id))
 
       const result = await dispatch(
         page, pick.element, currentElements, [pick.element], library, config.headless, pick.element._resolvedValue ?? null
@@ -342,9 +358,12 @@ export async function runFromPage(
       // Full navigation → recurse into new page; edge recorded inside runFromPage with the real nodeId
       if (result.navigated && result.toUrl && !isBlocked(result.toUrl)) {
         const trigger = {
-          type: pick.element.elementType === 'link' ? 'link_click' : 'button_click',
-          semanticType: 'navigate', elementId: pick.element.id, elementName: pick.element.name || null,
-        } as const
+          type: (pick.element.elementType === 'link' ? 'link_click' : 'button_click') as 'link_click' | 'button_click',
+          semanticType: 'navigate' as const,
+          elementId:    pick.element.id,
+          elementName:  pick.element.name || null,
+          prerequisiteActions: prerequisiteActions.length ? prerequisiteActions : undefined,
+        }
         await runFromPage(page, currentNodeId, graph, config, { ...ctx, depth: ctx.depth + 1, phaseBSteps: [], incomingEdge: { fromNodeId: currentNodeId, trigger } })
         return
       }
@@ -384,77 +403,109 @@ export async function runFromPage(
         }).catch(() => null)
 
         if (resultsMeta && resultsMeta.dataRows > 0) {
-          log.info('PICK', `  Results table detected (${resultsMeta.dataRows} rows, cols: ${resultsMeta.headers.join(', ')}) — recording node and finishing flow`)
+          log.info('PICK', `  Results table detected (${resultsMeta.dataRows} rows, cols: ${resultsMeta.headers.join(', ')}) — capturing elements and continuing`)
 
-          // Record the results state as a terminal wizard-step node
-          const resultsUrl   = page.url()
-          const resultsTitle = await page.title()
-          const resultsFp    = `results-${resultsMeta.dataRows}-${resultsMeta.headers.join('|').slice(0, 40)}`
+          const resultsUrl    = page.url()
+          const resultsTitle  = await page.title()
+          const resultsFp     = `results-${resultsMeta.dataRows}-${resultsMeta.headers.join('|').slice(0, 40)}`
           const resultsNodeId = nodeId(normalizeUrl(resultsUrl) + '#results')
+
+          // Capture interactive elements on the results page (pagination, sort, row links, etc.)
+          const resultsAllElements = await capturePageElements(page, library)
+          const filteredResultsElements = ctx.smartLLM
+            ? await filterElements(resultsAllElements, config.flowName!, resultsUrl, resultsTitle, ctx.smartLLM)
+            : resultsAllElements
+
           if (!graph.hasNode(resultsNodeId)) {
-            let resultsPageRef = 'Search Results'
-            if (ctx.smartLLM) {
-              const meta = await namePageRef(resultsTitle, resultsUrl, [], ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-              graph.incrementLLMCalls()
-              resultsPageRef = graph.registerPageRef(meta.pageRef || 'Search Results')
-            }
-            const resultsDescription = `Fee schedule results table: ${resultsMeta.dataRows} rows, columns: ${resultsMeta.headers.join(', ')}`
+            const resultsHeading = await getPageHeading(page)
+            const resultsPageRef = graph.registerPageRef(resultsHeading || 'Search Results')
+            const resultsDescription = `Results table: ${resultsMeta.dataRows} rows, columns: ${resultsMeta.headers.join(', ')}`
             graph.addNode(resultsNodeId, {
               url: resultsUrl, normalizedUrl: normalizeUrl(resultsUrl), title: resultsTitle,
               pageRef: resultsPageRef, description: resultsDescription,
               fingerprint: resultsFp, uiLibrary: library,
-              elements: [], unfilledFields: [],
+              elements: resultsAllElements, unfilledFields: [],
             })
-            log.info('GRAPH', `  Results node: ${resultsNodeId}  pageRef="${resultsPageRef}"  rows:${resultsMeta.dataRows}`)
+            log.info('GRAPH', `  Results node: ${resultsNodeId}  pageRef="${resultsPageRef}"  rows:${resultsMeta.dataRows}  elements:${resultsAllElements.length}`)
           }
           graph.addEdge({
             from: currentNodeId, to: resultsNodeId,
             trigger: {
               type: 'button_click', semanticType: 'submit_form',
               elementId: pick.element.id, elementName: pick.element.name || null,
-              formFields: filledFieldLabels,
+              prerequisiteActions: prerequisiteActions.length ? prerequisiteActions : undefined,
             },
           })
-          break
+          // Amend the last actionPath entry to note results were shown
+          if (actionPath.length > 0) {
+            actionPath[actionPath.length - 1] += ` → results table shown (${resultsMeta.dataRows} rows)`
+          } else {
+            actionPath.push(`results table shown (${resultsMeta.dataRows} rows)`)
+          }
+          currentElements = filteredResultsElements
+          currentNodeId   = resultsNodeId
+          continue
         }
 
-        currentElements = await capturePageElements(page, library)
-        currentElements = await filterElements(currentElements, config.flowName!, page.url(), await page.title(), ctx.smartLLM!)
-        log.info('FILTER', `  Re-filter after content change: ${currentElements.length} elements`)
+        const allCaptured = await capturePageElements(page, library)
+        currentElements = await filterElements(allCaptured, config.flowName!, page.url(), await page.title(), ctx.smartLLM!)
+        log.info('FILTER', `  Re-capture after content change: ${allCaptured.length} total, ${currentElements.length} after filter`)
         currentElements.forEach((e, i) => {
           log.info('FILTER', `    [${String(i + 1).padStart(3)}] ${e.elementType.padEnd(8)} "${e.name}"  selector=${e._selector}`)
         })
-        graph.incrementLLMCalls()
+
+        // Compute element diff: which elements appeared/disappeared after this interaction
+        const afterInteractionIds = new Set(currentElements.filter(e => e.visible).map(e => e.id))
+        const elementDiff = {
+          appeared:    [...afterInteractionIds].filter(id => !beforeInteractionIds.has(id)),
+          disappeared: [...beforeInteractionIds].filter(id => !afterInteractionIds.has(id)),
+        }
+        if (elementDiff.appeared.length > 0 || elementDiff.disappeared.length > 0) {
+          log.info('DIFF', `  elementDiff: +${elementDiff.appeared.length} appeared, -${elementDiff.disappeared.length} disappeared`)
+        }
 
         // Record wizard step as a distinct node (same URL, different content fingerprint)
-        const stepFp      = pageFingerprint(currentElements.map(e => e.id))
+        const stepFp      = pageFingerprint(allCaptured.map(e => e.id))
         const stepPageUrl = page.url()
         const stepTitle   = await page.title()
         const stepNodeId  = nodeId(normalizeUrl(stepPageUrl) + '#' + stepFp.slice(0, 8))
-        if (!graph.hasNode(stepNodeId)) {
-          let stepPageRef = graph.registerPageRef(stepTitle)
-          let stepDescription: string | undefined
-          if (ctx.smartLLM) {
-            const meta = await namePageRef(stepTitle, stepPageUrl, currentElements, ctx.smartLLM, ctx.existingNodes, graph.usedPageRefNames)
-            graph.incrementLLMCalls()
-            stepPageRef = graph.registerPageRef(meta.pageRef)
-            stepDescription = meta.description || undefined
+
+        // Validate against prior run's elementDiff if this edge already exists (replay mode)
+        const existingEdge = graph.findEdge(currentNodeId, stepNodeId, pick.element.id)
+        if (existingEdge?.elementDiff?.appeared && existingEdge.elementDiff.appeared.length > 0) {
+          const appeared = existingEdge.elementDiff.appeared
+          const passed = appeared.filter(id => afterInteractionIds.has(id))
+          const failed = appeared.filter(id => !afterInteractionIds.has(id))
+          log.info('VALIDATE', `  Edge validation: ${passed.length}/${appeared.length} expected elements appeared`)
+          if (failed.length > 0) {
+            log.warn('VALIDATE', `  Missing expected elements: ${failed.join(', ')}`)
           }
+          graph.updateEdge(existingEdge.id, {
+            validationResult: { passed, failed, timestamp: new Date().toISOString() },
+          })
+        }
+
+        if (!graph.hasNode(stepNodeId)) {
+          const stepHeading = await getPageHeading(page)
+          const stepPageRef = graph.registerPageRef(stepHeading)
           graph.addNode(stepNodeId, {
             url: stepPageUrl, normalizedUrl: normalizeUrl(stepPageUrl), title: stepTitle,
-            pageRef: stepPageRef, description: stepDescription,
+            pageRef: stepPageRef,
             fingerprint: stepFp, uiLibrary: library,
-            elements: currentElements, unfilledFields: [],
+            elements: allCaptured, unfilledFields: [],
           })
-          log.info('GRAPH', `  Wizard step node: ${stepNodeId}  pageRef="${stepPageRef}"  elements:${currentElements.length}`)
+          log.info('GRAPH', `  Wizard step node: ${stepNodeId}  pageRef="${stepPageRef}"  elements:${allCaptured.length}`)
         }
         graph.addEdge({
           from: currentNodeId, to: stepNodeId,
           trigger: {
             type: pick.element.elementType === 'link' ? 'link_click' : 'button_click',
             semanticType: 'reveal_content',
-            elementId: pick.element.id, elementName: pick.element.name || null,
+            elementId:    pick.element.id,
+            elementName:  pick.element.name || null,
+            prerequisiteActions: prerequisiteActions.length ? prerequisiteActions : undefined,
           },
+          elementDiff,
         })
         currentNodeId = stepNodeId   // advance: next edge chains from this step
 
@@ -463,6 +514,12 @@ export async function runFromPage(
 
       // skip / no change — stop
       break
+    }
+
+    // Store path-vs-intent result on the graph so index.ts can merge into eval after runEval()
+    if (actionPath.length > 0) {
+      graph.setPathIntent(lastIntentCoverage, actionPath)
+      log.info('PICK', `  Flow path recorded: ${actionPath.length} steps  finalIntentCoverage=${lastIntentCoverage}%`)
     }
 
   } else {
@@ -504,8 +561,7 @@ export async function runFromPage(
         element.fillSource = fillSource
         element.fillConfidence = fillConfidence
         element._resolvedValue = resolvedValue
-        if (fillResult.source === 'llm' || fillResult.source === 'excel') graph.incrementLLMCalls()
-        else if (fillResult.source === 'cache') graph.incrementCacheHits()
+        if (fillResult.source === 'cache') graph.incrementCacheHits()
       }
 
       if (element.elementType === 'radio') {

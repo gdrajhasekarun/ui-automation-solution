@@ -150,12 +150,31 @@ export const NodeSchema = z.object({
   description:    z.string().optional(),
   fingerprint:    z.string(),
   uiLibrary:      UILibrarySchema,
-  elements:       z.array(CapturedElementSchema),
+  // Runtime-only: full merged set (globalElements + ownElements). Not serialized to disk.
+  elements:            z.array(CapturedElementSchema),
+  // Serialized: elements unique to this page (not in globalElements)
+  ownElements:         z.array(CapturedElementSchema).optional(),
+  // Serialized: IDs of globalElements that appear on this specific page
+  inheritedElementIds: z.array(z.string()).optional(),
   unfilledFields: z.array(UnfilledFieldSchema).default([]),
   screenshotPath: z.string().optional(),
   spec:           SpecSchema.optional(),
+  className:      z.string().optional(),
 })
 export type Node = z.infer<typeof NodeSchema>
+
+export const ElementDiffSchema = z.object({
+  appeared:    z.array(z.string()),  // element IDs newly visible after this interaction
+  disappeared: z.array(z.string()),  // element IDs no longer visible after this interaction
+})
+export type ElementDiff = z.infer<typeof ElementDiffSchema>
+
+export const ValidationResultSchema = z.object({
+  passed:    z.array(z.string()),  // element IDs from elementDiff.appeared that were found
+  failed:    z.array(z.string()),  // element IDs from elementDiff.appeared that were missing
+  timestamp: z.string(),
+})
+export type ValidationResult = z.infer<typeof ValidationResultSchema>
 
 export const EdgeSchema = z.object({
   id:          z.string(),
@@ -168,8 +187,26 @@ export const EdgeSchema = z.object({
     semanticType: z.enum(['navigate','open_modal','submit_form','trigger_action','reveal_content']).nullable(),
     elementId:    z.string(),
     elementName:  z.string().nullable(),
-    formFields:   z.array(z.string()).optional(),
+    formFields:   z.array(z.string()).optional(),   // deprecated — kept for read compat only
+    prerequisiteActions: z.array(z.object({
+      elementId:   z.string(),
+      elementName: z.string().nullable(),
+      elementType: z.string(),
+      action:      z.enum(['fill', 'select']),
+      value:       z.string().nullable(),
+      source:      z.enum(['excel', 'notes', 'static', 'llm', 'cache', 'skip']),
+    })).optional(),
   }),
+  // Recorded during crawl: which elements appeared/disappeared after this interaction
+  elementDiff:      ElementDiffSchema.optional(),
+  // Populated during replay: which appeared elements were found/missing
+  validationResult: ValidationResultSchema.optional(),
+  // Populated post-crawl by annotateGraph — describes what this transition accomplishes
+  spec: z.object({
+    intent:      z.string().optional(),
+    userEdited:  z.boolean().default(false),
+    generatedAt: z.string().optional(),
+  }).optional(),
 })
 export type Edge = z.infer<typeof EdgeSchema>
 
@@ -198,6 +235,11 @@ export const EvalSchema = z.object({
   specQuality:  SpecQualitySchema.nullable(),
   flags:        z.array(z.string()),
   evaluatedAt:  z.string(),
+  pathIntent:   z.object({
+    score:        z.number().min(0).max(100),
+    stepsRecorded: z.number(),
+    path:         z.array(z.string()),
+  }).optional(),
 })
 export type Eval = z.infer<typeof EvalSchema>
 
@@ -242,6 +284,8 @@ export const AnnotationBatchSchema = z.object({
 })
 
 export const GraphSchema = z.object({
+  // Elements shared across ≥ threshold pages — defines the generated BasePage class
+  globalElements: z.record(z.string(), CapturedElementSchema).optional(),
   meta: z.object({
     crawledAt:             z.string(),
     seedUrl:               z.string(),
@@ -251,7 +295,6 @@ export const GraphSchema = z.object({
     totalNodes:            z.number(),
     totalEdges:            z.number(),
     unfilledFields:        z.number(),
-    llmCallCount:          z.number(),
     cacheHitCount:         z.number(),
     summary:               z.string().optional(),
     source:                z.literal('flow-crawler'),
@@ -269,6 +312,19 @@ export const GraphSchema = z.object({
       unchanged:    z.number(),
     }).optional(),
     eval:  EvalSchema.optional(),
+    llmUsage: z.object({
+      totalCalls:   z.number(),
+      totalTokens:  z.number(),
+      totalCostUsd: z.number(),
+      calls: z.array(z.object({
+        fn:           z.string(),
+        model:        z.string(),
+        inputTokens:  z.number(),
+        outputTokens: z.number(),
+        costUsd:      z.number(),
+        ts:           z.number(),
+      })),
+    }).optional(),
   }),
   nodes: z.record(z.string(), NodeSchema),
   edges: z.array(EdgeSchema),
@@ -342,7 +398,6 @@ export interface JobRecord {
   node_count?:               number
   edge_count?:               number
   unfilled_fields?:          number
-  llm_call_count?:           number
   cache_hit_count?:          number
   output_file?:              string
   error?:                    string

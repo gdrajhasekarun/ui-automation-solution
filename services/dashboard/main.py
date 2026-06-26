@@ -204,6 +204,16 @@ async def plan_run(body: PlanRunBody):
     return {"tc_id": tc_id, "job_id": data.get("job_id"), "status": "STARTED"}
 
 
+@app.get("/api/plan/usage/{app_id}")
+async def plan_usage(app_id: str):
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{PLANNER_URL}/plan/usage/{app_id}")
+            return resp.json()
+    except Exception as e:
+        return {"totalCalls": 0, "totalCostUsd": 0.0, "detail": str(e)}
+
+
 @app.get("/api/plan/status/{job_id}")
 async def plan_status(job_id: str):
     try:
@@ -378,7 +388,15 @@ def get_graph(app_id: str):
     if not os.path.exists(graph_path):
         return JSONResponse(status_code=404, content={"detail": "Graph not found — run the pipeline first"})
     with open(graph_path) as f:
-        return json.load(f)
+        raw = json.load(f)
+    # Hydrate node.elements from globalElements + ownElements for graphs written in split format
+    global_elements = raw.get("globalElements") or {}
+    if global_elements:
+        for node in (raw.get("nodes") or {}).values() if isinstance(raw.get("nodes"), dict) else (raw.get("nodes") or []):
+            if "ownElements" in node:
+                inherited = [global_elements[eid] for eid in (node.get("inheritedElementIds") or []) if eid in global_elements]
+                node["elements"] = inherited + (node.get("ownElements") or [])
+    return raw
 
 
 @app.get("/api/services/health")

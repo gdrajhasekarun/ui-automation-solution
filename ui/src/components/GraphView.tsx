@@ -24,17 +24,23 @@ interface GraphNode {
   url: string
   title: string
   elements: GraphElement[]
+  ownElements?: GraphElement[]
+  inheritedElementIds?: string[]
   assertableElements?: string[]
   className?: string
-  pageRef?: string  // always-present derived PascalCase name from backend normalization
-  description?: string  // LLM-generated page description from AI crawler
-  uiLibrary?: string    // detected UI library (bootstrap, material, etc.)
+  pageRef?: string
+  description?: string
+  uiLibrary?: string
 }
 
 interface GraphEdge {
-  edgeId: string
-  fromNodeId: string
-  toNodeId: string
+  edgeId?: string
+  id?: string
+  fromNodeId?: string
+  toNodeId?: string
+  from?: string     // flow-crawler format
+  to?: string       // flow-crawler format
+  trigger?: { elementName?: string; selectorKey?: string }
   selectorKey?: string | null
   label?: string
   actionType?: string
@@ -43,7 +49,14 @@ interface GraphEdge {
 interface GraphData {
   nodes: GraphNode[] | Record<string, Omit<GraphNode, 'nodeId'>>
   edges: GraphEdge[]
-  meta?: { totalNodes?: number; totalEdges?: number; appId?: string; crawledAt?: string }
+  globalElements?: Record<string, GraphElement>
+  meta?: {
+    totalNodes?: number; totalEdges?: number; appId?: string; crawledAt?: string
+    llmUsage?: {
+      totalCalls: number; totalTokens: number; totalCostUsd: number
+      calls: { fn: string; model: string; inputTokens: number; outputTokens: number; costUsd: number; ts: number }[]
+    }
+  }
 }
 
 // ── Selector resolution ───────────────────────────────────────────────────────
@@ -133,9 +146,67 @@ function elementCountColor(count: number, C: ReturnType<typeof useTheme>['C']) {
   return C.green
 }
 
+// ── LLM Usage Panel ───────────────────────────────────────────────────────────
+type LLMUsage = NonNullable<GraphData['meta']>['llmUsage']
+
+function LLMUsagePanel({ usage, isDark }: { usage: NonNullable<LLMUsage>; isDark: boolean }) {
+  const { C } = useTheme()
+  const [expanded, setExpanded] = useState(false)
+
+  const accent = isDark ? '#a78bfa' : '#7c3aed'
+
+  return (
+    <div style={{ marginBottom: 16, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', flexShrink: 0 }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px',
+          background: C.surface2, cursor: 'pointer', userSelect: 'none',
+        }}
+      >
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 700, color: accent, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          LLM Usage
+        </span>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.text }}>
+          ${usage.totalCostUsd.toFixed(4)} · {usage.totalTokens.toLocaleString()} tokens · {usage.totalCalls} calls
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: C.muted }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+      {expanded && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'IBM Plex Mono',monospace" }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {['Function', 'Model', 'In tokens', 'Out tokens', 'Cost (USD)', 'Time'].map(h => (
+                  <th key={h} style={{ padding: '6px 12px', textAlign: 'left', color: C.muted, fontWeight: 600, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {usage.calls.map((c, i) => (
+                <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: '5px 12px', color: accent }}>{c.fn}</td>
+                  <td style={{ padding: '5px 12px', color: C.text }}>{c.model}</td>
+                  <td style={{ padding: '5px 12px', color: C.muted, textAlign: 'right' }}>{c.inputTokens.toLocaleString()}</td>
+                  <td style={{ padding: '5px 12px', color: C.muted, textAlign: 'right' }}>{c.outputTokens.toLocaleString()}</td>
+                  <td style={{ padding: '5px 12px', color: C.text, textAlign: 'right' }}>${c.costUsd.toFixed(5)}</td>
+                  <td style={{ padding: '5px 12px', color: C.muted }}>{new Date(c.ts).toLocaleTimeString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
+const GLOBAL_TABS_KEY = '__global_tabs__'
+
 export default function GraphView({ data, fileExt = '.java' }: { data: GraphData; fileExt?: string }) {
   const { C, isDark } = useTheme()
+  const globalTabsRef = useRef<HTMLTableRowElement>(null)
 
   const rawNodes = data.nodes || []
   const nodes: GraphNode[] = Array.isArray(rawNodes)
@@ -144,6 +215,8 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
         ([nodeId, node]) => ({ nodeId, ...node })
       )
   const edges: GraphEdge[] = data.edges || []
+  const globalElements = useMemo(() => data.globalElements || {}, [data.globalElements])
+  const hasGlobalTabs = Object.keys(globalElements).length > 0
   const meta = data.meta
 
   // Build lookup: nodeId → page title  (for edge hover)
@@ -153,22 +226,31 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
     return m
   }, [nodes])
 
+  // Normalize edge node IDs (support both fromNodeId/toNodeId and from/to formats)
+  const edgeFrom = (e: GraphEdge) => e.fromNodeId || e.from || ''
+  const edgeTo   = (e: GraphEdge) => e.toNodeId   || e.to   || ''
+  const edgeSelectorKey = (e: GraphEdge) =>
+    e.selectorKey || e.trigger?.selectorKey || e.trigger?.elementName || e.label || ''
+
   // Index edges by fromNodeId so we only show edges relevant to this node's elements
   const edgesByNode = useMemo(() => {
     const m: Record<string, GraphEdge[]> = {}
     edges.forEach(e => {
-      if (!m[e.fromNodeId]) m[e.fromNodeId] = []
-      m[e.fromNodeId].push(e)
+      const from = edgeFrom(e)
+      if (!from) return
+      if (!m[from]) m[from] = []
+      m[from].push(e)
     })
     return m
   }, [edges])
 
-  const rows = useMemo(() =>
-    [...nodes]
+  const rows = useMemo(() => {
+    return [...nodes]
       .sort((a, b) => (b.elements?.length ?? 0) - (a.elements?.length ?? 0))
-      .map((n, i) => ({ ...n, key: n.nodeId, idx: i + 1 })),
-    [nodes]
-  )
+      .map((n, i) => ({ ...n, key: n.nodeId, idx: i + 1 }))
+  }, [nodes])
+
+  const [globalTabsExpanded, setGlobalTabsExpanded] = useState(true)
 
   const [expandedKeys, setExpandedKeys] = useState<string[]>([])
   const tableScrollRef = useRef<HTMLDivElement>(null)
@@ -198,53 +280,62 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
     }
   }
 
+  const scrollToGlobalTabs = () => {
+    setGlobalTabsExpanded(true)
+    setTimeout(() => {
+      globalTabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 80)
+  }
+
   const columns = [
     {
       title: '#',
       dataIndex: 'idx',
       width: 44,
       render: (v: number) => (
-        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted }}>{v}</span>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted }}>{v || ''}</span>
       ),
     },
     {
       title: 'Page',
       dataIndex: 'title',
-      render: (_: string, row: GraphNode & { idx: number }) => (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: C.text }}>
-              {row.title || '(untitled)'}
-            </span>
-            {row.uiLibrary && (
-              <span style={{
-                fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
-                padding: '1px 5px', borderRadius: 3,
-                background: C.blue + '22', color: C.blue, border: `1px solid ${C.blue}44`,
-              }}>
-                {row.uiLibrary}
+      render: (_: string, row: GraphNode & { idx: number }) => {
+        return (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: C.text }}>
+                {row.title || '(untitled)'}
               </span>
-            )}
-          </div>
-          <AntTooltip title={row.url}>
-            <div style={{ fontSize: 11, color: C.muted, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: row.description ? 4 : 0 }}>
-              {row.url}
+              {row.uiLibrary && (
+                <span style={{
+                  fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
+                  padding: '1px 5px', borderRadius: 3,
+                  background: C.blue + '22', color: C.blue, border: `1px solid ${C.blue}44`,
+                }}>
+                  {row.uiLibrary}
+                </span>
+              )}
             </div>
-          </AntTooltip>
-          {row.description && (
-            <AntTooltip title={row.description}>
-              <div style={{
-                fontSize: 11, color: C.muted, maxWidth: 400,
-                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                overflow: 'hidden', lineHeight: 1.4, cursor: 'help',
-                fontStyle: 'italic',
-              }}>
-                {row.description}
+            <AntTooltip title={row.url}>
+              <div style={{ fontSize: 11, color: C.muted, maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: row.description ? 4 : 0 }}>
+                {row.url}
               </div>
             </AntTooltip>
-          )}
-        </div>
-      ),
+            {row.description && (
+              <AntTooltip title={row.description}>
+                <div style={{
+                  fontSize: 11, color: C.muted, maxWidth: 400,
+                  display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden', lineHeight: 1.4, cursor: 'help',
+                  fontStyle: 'italic',
+                }}>
+                  {row.description}
+                </div>
+              </AntTooltip>
+            )}
+          </div>
+        )
+      },
     },
     {
       title: 'Page Ref',
@@ -254,14 +345,9 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
         const ref = cls || derivePageRef(row)
         const generated = !!cls
         return (
-          <span style={{
-            fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
-            color: generated ? C.green : C.muted,
-          }}>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: generated ? C.green : C.muted }}>
             {ref + fileExt}
-            {!generated && (
-              <span style={{ fontSize: 9, marginLeft: 5, color: C.amber, verticalAlign: 'middle' }}>derived</span>
-            )}
+            {!generated && <span style={{ fontSize: 9, marginLeft: 5, color: C.amber, verticalAlign: 'middle' }}>derived</span>}
           </span>
         )
       },
@@ -269,25 +355,30 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
     {
       title: 'Elements',
       dataIndex: 'elements',
-      width: 90,
-      render: (els: GraphElement[]) => (
-        <span style={{
-          fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, fontWeight: 700,
-          color: elementCountColor(els?.length ?? 0, C),
-        }}>
-          {els?.length ?? 0}
-        </span>
-      ),
+      width: 120,
+      render: (els: GraphElement[], row: GraphNode) => {
+        const ownCount = row.ownElements ? row.ownElements.length : (els?.length ?? 0)
+        const inheritedCount = row.inheritedElementIds?.length ?? 0
+        return (
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace" }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: elementCountColor(ownCount, C) }}>{ownCount}</span>
+            {inheritedCount > 0 && (
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 4 }}>+{inheritedCount}</span>
+            )}
+          </div>
+        )
+      },
       sorter: (a: GraphNode, b: GraphNode) => (a.elements?.length ?? 0) - (b.elements?.length ?? 0),
       defaultSortOrder: 'descend' as const,
     },
     {
       title: 'Action breakdown',
       dataIndex: 'elements',
-      render: (els: GraphElement[]) => {
-        if (!els?.length) return <span style={{ color: C.muted, fontSize: 11 }}>—</span>
+      render: (els: GraphElement[], row: GraphNode) => {
+        const displayEls = row.ownElements ?? els
+        if (!displayEls?.length) return <span style={{ color: C.muted, fontSize: 11 }}>—</span>
         const counts: Record<string, number> = {}
-        els.forEach(e => {
+        displayEls.forEach(e => {
           const t = resolveActionType(e)
           counts[t] = (counts[t] ?? 0) + 1
         })
@@ -302,26 +393,28 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
     },
   ]
 
-  const expandedRowRender = (row: GraphNode) => {
-    const nodeEdges = edgesByNode[row.nodeId] || []
-
-    // Build element rows with matched edges pre-computed
-    const elRows = (row.elements || []).map((el, i) => {
+  const buildElRows = (elements: GraphElement[], nodeId: string) =>
+    elements.map((el, i) => {
       const elName     = (el.name || el.label || '').trim()
       const elSelector = resolveSelector(el).trim()
+      const nodeEdges  = nodeId ? (edgesByNode[nodeId] || []) : edges
       const matchedEdges: GraphEdge[] = []
       nodeEdges.forEach(e => {
-        const ek = (e.selectorKey || '').trim()
+        const ek = edgeSelectorKey(e).trim()
         if (ek && (ek === elName || ek === elSelector)) matchedEdges.push(e)
       })
       if (matchedEdges.length === 0 && elName) {
         edges.forEach(e => {
-          const ek = (e.selectorKey || '').trim()
+          const ek = edgeSelectorKey(e).trim()
           if (ek === elName) matchedEdges.push(e)
         })
       }
       return { key: i, el, elName, elSelector, actionType: resolveActionType(el), matchedEdges }
     })
+
+  const expandedRowRender = (row: GraphNode) => {
+    const displayElements = row.ownElements ?? row.elements ?? []
+    const elRows = buildElRows(displayElements, row.nodeId)
 
     const MONO_SM: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }
     const thStyle: React.CSSProperties = {
@@ -357,6 +450,8 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
       return []
     }
 
+    const inheritedCount = row.inheritedElementIds?.length ?? 0
+
     return (
       <div style={{ padding: '4px 0 8px' }}>
         {row.description && (
@@ -367,6 +462,20 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
           }}>
             {row.description}
           </div>
+        )}
+
+        {inheritedCount > 0 && (
+          <button
+            onClick={scrollToGlobalTabs}
+            style={{
+              background: C.green + '15', border: `1px solid ${C.green}44`,
+              borderRadius: 5, padding: '4px 10px', marginBottom: 10,
+              cursor: 'pointer', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+              color: C.green, display: 'inline-flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            ↑ {inheritedCount} inherited from GlobalTabs
+          </button>
         )}
 
         {!elRows.length ? (
@@ -467,11 +576,13 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
                           <span style={{ color: C.border }}>—</span>
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {matchedEdges.map((e, ei) => (
+                            {matchedEdges.map((e, ei) => {
+                              const toId = edgeTo(e)
+                              return (
                               <button
                                 key={ei}
-                                onClick={() => jumpToNode(e.toNodeId)}
-                                title={e.toNodeId}
+                                onClick={() => jumpToNode(toId)}
+                                title={toId}
                                 style={{
                                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                                   color: C.blue, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
@@ -480,9 +591,10 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
                                   textDecoration: 'underline', textUnderlineOffset: 2,
                                 }}
                               >
-                                → {nodeTitle[e.toNodeId] || e.toNodeId}
+                                → {nodeTitle[toId] || toId}
                               </button>
-                            ))}
+                            )})}
+
                           </div>
                         )}
                       </td>
@@ -543,6 +655,87 @@ export default function GraphView({ data, fileExt = '.java' }: { data: GraphData
           </div>
         ))}
       </div>
+
+      {/* LLM Usage section */}
+      {meta?.llmUsage && <LLMUsagePanel usage={meta.llmUsage} isDark={isDark} />}
+
+      {/* GlobalTabs section */}
+      {hasGlobalTabs && (() => {
+        const gtElements = Object.values(globalElements)
+        const gtRows = buildElRows(gtElements, '')
+        const MONO_SM: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }
+        const thStyle: React.CSSProperties = {
+          ...MONO_SM, fontSize: 10, color: C.muted, fontWeight: 600,
+          textTransform: 'uppercase' as const, letterSpacing: '0.05em',
+          padding: '5px 10px', borderBottom: `1px solid ${C.border}`,
+          background: isDark ? '#161b22' : '#f3f4f6',
+          whiteSpace: 'nowrap' as const, position: 'sticky' as const, top: 0, zIndex: 1,
+        }
+        const tdStyle: React.CSSProperties = {
+          ...MONO_SM, padding: '6px 10px', borderBottom: `1px solid ${C.border}`, verticalAlign: 'top' as const,
+        }
+        return (
+          <div ref={globalTabsRef as React.Ref<HTMLDivElement>} style={{ marginBottom: 16, flexShrink: 0, border: `1px solid ${C.green}44`, borderRadius: 8, overflow: 'hidden' }}>
+            {/* Header bar */}
+            <button
+              onClick={() => setGlobalTabsExpanded(e => !e)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 14px', background: C.green + '0f', border: 'none', cursor: 'pointer',
+                borderBottom: globalTabsExpanded ? `1px solid ${C.green}33` : 'none',
+              }}
+            >
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 700, color: C.green }}>GlobalTabs</span>
+              <span style={{
+                fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                background: C.green + '22', color: C.green, border: `1px solid ${C.green}44`,
+              }}>Base Class</span>
+              <span style={{ fontSize: 11, color: C.muted, fontStyle: 'italic' }}>Shared nav / tab elements inherited by all pages</span>
+              <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 700, color: C.green }}>{gtElements.length}</span>
+              <span style={{ color: C.muted, fontSize: 12, marginLeft: 6 }}>{globalTabsExpanded ? '▲' : '▼'}</span>
+            </button>
+            {globalTabsExpanded && (
+              <div style={{ overflowX: 'auto', maxHeight: 300, overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...thStyle, width: 36, textAlign: 'center' }}>#</th>
+                      <th style={thStyle}>Name</th>
+                      <th style={thStyle}>Locator</th>
+                      <th style={{ ...thStyle, width: 90 }}>Action</th>
+                      <th style={thStyle}>Possible Values</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gtRows.map(({ key, el, elName, elSelector, actionType }) => {
+                      const color = actionColor(actionType, isDark)
+                      return (
+                        <tr key={key} style={{ background: key % 2 === 0 ? 'transparent' : (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)') }}>
+                          <td style={{ ...tdStyle, color: C.muted, fontSize: 10, textAlign: 'center' }}>{key + 1}</td>
+                          <td style={{ ...tdStyle, color: C.text, fontWeight: 500, maxWidth: 180 }}>{elName || <span style={{ color: C.muted }}>—</span>}</td>
+                          <td style={{ ...tdStyle, maxWidth: 220 }}>
+                            <code style={{ color: C.muted, display: 'block', fontSize: 10, maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', borderRadius: 3, padding: '1px 5px' }}>
+                              {elSelector || '—'}
+                            </code>
+                          </td>
+                          <td style={tdStyle}>
+                            <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 4, fontWeight: 600, color, background: color + (isDark ? '22' : '18'), border: `1px solid ${color}${isDark ? '55' : '44'}`, fontFamily: "'IBM Plex Mono',monospace" }}>
+                              {actionType}
+                            </span>
+                          </td>
+                          <td style={{ ...tdStyle, color: C.muted, fontSize: 10 }}>
+                            {el.placeholder ? `placeholder: ${el.placeholder}` : (el.resolvedValue || el._resolvedValue || '—')}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Pages table — outer div scrolls, no scroll.y needed on Table */}
       <div ref={tableScrollRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>

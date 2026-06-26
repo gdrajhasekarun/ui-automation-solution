@@ -5,11 +5,13 @@ export { PathManager }  from './pathManager.js'
 import { chromium } from 'playwright'
 import * as path from 'path'
 import * as fs from 'fs'
-import type { CrawlerConfig, RequestPayload, Node, Edge } from '../types.js'
-import { CrawlerGraph as Graph } from '../graph/index.js'
+import type { CrawlerConfig, RequestPayload, Node, Edge, CapturedElement } from '../types.js'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { CrawlerGraph as Graph, hydrateGraphNodes } from '../graph/index.js'
 import { CrawlDataCache } from '../cache/index.js'
 import { readExcel } from '../data/index.js'
 import { buildLLMPair, parseNotes, summarizeGraph, annotateGraph } from '../llm/index.js'
+import { TokenTracker } from '../llm/tokenTracker.js'
 import { runEval } from '../eval/index.js'
 import { runCrawlLoop } from './flowRunner.js'
 import { log } from '../logger.js'
@@ -19,13 +21,16 @@ interface ExistingGraph {
   edges: Edge[]
 }
 
-function loadExistingGraph(outputFile: string): ExistingGraph {
+function loadExistingGraph(outputFile: string): ExistingGraph & { globalElements?: Record<string, CapturedElement>, previousLLMCalls?: unknown[] } {
   try {
     if (!fs.existsSync(outputFile)) return { nodes: {}, edges: [] }
     const data = JSON.parse(fs.readFileSync(outputFile, 'utf8'))
+    const hydrated = hydrateGraphNodes(data)
     return {
-      nodes: (data.nodes ?? {}) as Record<string, Node>,
-      edges: (data.edges ?? [])  as Edge[],
+      nodes:            (hydrated.nodes   ?? {}) as Record<string, Node>,
+      edges:            (hydrated.edges   ?? [])  as Edge[],
+      globalElements:   (data.globalElements ?? {}) as Record<string, CapturedElement>,
+      previousLLMCalls: (data.meta?.llmUsage?.calls ?? []) as unknown[],
     }
   } catch {
     return { nodes: {}, edges: [] }
@@ -37,7 +42,6 @@ export interface CrawlResult {
   nodeCount:                number
   edgeCount:                number
   unfilledFields:           number
-  llmCallCount:             number
   cacheHitCount:            number
   summary?:                 string
   evalScore?:               number
@@ -55,7 +59,7 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
   // Load existing graph so pageRef names and edges are reused/merged across runs.
   // Edges are seeded so branch detection can compare new edges against prior runs
   // (e.g. authenticated run adds a branch to a node the unauthenticated run already recorded).
-  const { nodes: existingNodes, edges: existingEdges } = loadExistingGraph(outputFile)
+  const { nodes: existingNodes, edges: existingEdges, globalElements: existingGlobals, previousLLMCalls } = loadExistingGraph(outputFile)
   const existingNodeCount = Object.keys(existingNodes).length
   if (existingNodeCount > 0) {
     log.info('CRAWL', `Loaded ${existingNodeCount} existing nodes, ${existingEdges.length} existing edges`)
@@ -64,6 +68,10 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
     // Without this, edges reference nodes that were never visited in the current run → orphaned.
     graph.seedNodes(existingNodes)
     graph.seedEdges(existingEdges)
+    if (existingGlobals && Object.keys(existingGlobals).length > 0) {
+      graph.seedGlobalElements(existingGlobals)
+      log.info('CRAWL', `Seeded ${Object.keys(existingGlobals).length} global elements from prior graph`)
+    }
   }
 
   // Load external data sources
@@ -72,8 +80,13 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
 
   // LLM setup
   const llmPair = config.llm.enabled ? await buildLLMPair(config) : null
+  const tracker = new TokenTracker()
   const smartLLM = llmPair?.smartLLM ?? null
   const fastLLM  = llmPair?.fastLLM  ?? null
+  // Attach token-tracking callbacks by binding them to the LLM instances directly.
+  // withConfig() returns a Runnable that lacks withStructuredOutput, so we patch instead.
+  if (smartLLM) tracker.attachTo(smartLLM, 'smart')
+  if (fastLLM)  tracker.attachTo(fastLLM,  'fast')
 
   if (!config.llm.enabled) log.warn('CRAWL', 'LLM disabled — Phase A will use static/Excel values only')
   else if (!smartLLM)       log.warn('CRAWL', 'LLM failed to load — check API key in .env')
@@ -167,6 +180,19 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
     graph.setEval(evalResult)
     evalScore = evalResult.score
     evalGrade = evalResult.grade
+
+    // Accumulate LLM token/cost records across runs — append to prior calls
+    const priorCalls = (previousLLMCalls ?? []) as import('../llm/tokenTracker.js').LLMCallRecord[]
+    const allCalls = [...priorCalls, ...tracker.calls]
+    if (allCalls.length > 0) {
+      graph.setLLMUsage({
+        totalCalls:   allCalls.length,
+        totalTokens:  allCalls.reduce((s, c) => s + c.inputTokens + c.outputTokens, 0),
+        totalCostUsd: +allCalls.reduce((s, c) => s + c.costUsd, 0).toFixed(6),
+        calls:        allCalls,
+      })
+      log.info('TOKENS', `LLM usage: ${allCalls.length} calls  $${allCalls.reduce((s, c) => s + c.costUsd, 0).toFixed(4)}  (this run: ${tracker.calls.length} calls  $${tracker.totalCostUsd.toFixed(4)})`)
+    }
     specQualityRecommendation = evalResult.specQuality?.recommendation
 
     await graph.writeToFile(outputFile)
@@ -194,7 +220,6 @@ export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): 
     nodeCount:                graph.nodeCount,
     edgeCount:                graph.edgeCount,
     unfilledFields:           graph.unfilledCount,
-    llmCallCount:             graph.llmCallCount,
     cacheHitCount:            graph.cacheHitCount,
     evalScore,
     evalGrade,

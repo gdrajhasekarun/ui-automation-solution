@@ -1,6 +1,10 @@
 import os
+import re
 import logging
 from datetime import datetime, timezone
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger("planner.test_gen")
 
@@ -48,13 +52,67 @@ SETUP_MARKER = "@BeforeMethod"
 DATA_PROVIDER_MARKER = "@DataProvider(name = \"excelData\")"
 
 
-def _build_method(planner_output: dict, description: str) -> str:
-    method_name = planner_output.get("testMethodName", "TC_Unknown")
+def _tc_name_to_method(tc_name: str) -> str:
+    """Convert a user-provided test case name to a valid Java camelCase method identifier."""
+    cleaned = re.sub(r'[^a-zA-Z0-9\s]', ' ', tc_name)
+    words = [w for w in cleaned.split() if w]
+    if not words:
+        return "testCase"
+    method = words[0].lower() + "".join(w.title() for w in words[1:])
+    if method[0].isdigit():
+        method = "tc" + method
+    return method
+
+
+def _existing_method_names(file_path: str) -> set:
+    """Return all non-lifecycle method names already in the Java file."""
+    if not os.path.exists(file_path):
+        return set()
+    names: set = set()
+    with open(file_path) as f:
+        for line in f:
+            m = re.search(r'public void (\w+)\(', line)
+            if m and m.group(1) not in ("setUp", "tearDown"):
+                names.add(m.group(1))
+    return names
+
+
+def _llm_rename(tc_name: str, description: str, existing: set) -> str:
+    """Ask LLM for a unique Java method name when the derived one collides."""
+    try:
+        model = ChatOpenAI(
+            model="gpt-4o-mini",
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            max_tokens=30,
+        )
+        prompt = (
+            f"Generate a unique Java camelCase method name for this test case.\n"
+            f"Test case name: {tc_name}\n"
+            f"Description: {description}\n"
+            f"Already taken: {', '.join(sorted(existing))}\n"
+            f"Return ONLY the method name, nothing else."
+        )
+        resp = model.invoke([HumanMessage(content=prompt)])
+        raw = str(resp.content).strip()
+        name = re.sub(r'[^a-zA-Z0-9_]', '', raw.split()[0] if raw.split() else "")
+        if name and name[0].isdigit():
+            name = "tc" + name
+        return name or "testCase"
+    except Exception as e:
+        logger.warning(f"LLM rename failed: {e} — falling back to counter")
+        base = _tc_name_to_method(tc_name)
+        i = 2
+        while f"{base}{i}" in existing:
+            i += 1
+        return f"{base}{i}"
+
+
+def _build_method(planner_output: dict, description: str, method_name: str) -> str:
     confidence = planner_output.get("confidence", 0)
     params = planner_output.get("parameters", [])
     steps = planner_output.get("steps", [])
     starting_class = planner_output.get("startingClass", "")
-    final_assertion = planner_output.get("finalAssertion", {})
+    final_assertion = planner_output.get("finalAssertion") or {}
 
     param_decl = ", ".join(f"{p['type']} {p['name']}" for p in params)
 
@@ -90,7 +148,7 @@ def _build_method(planner_output: dict, description: str) -> str:
     )
 
 
-def generate(planner_output: dict, app_id: str, java_dir: str, description: str = "") -> str:
+def generate(planner_output: dict, app_id: str, java_dir: str, description: str = "", tc_name: str = "") -> str:
     starting_class = planner_output.get("startingClass", "Generated")
     class_name = starting_class.replace("Page", "") + "Tests" if starting_class else "GeneratedTests"
 
@@ -98,7 +156,14 @@ def generate(planner_output: dict, app_id: str, java_dir: str, description: str 
     os.makedirs(tests_dir, exist_ok=True)
     file_path = os.path.join(tests_dir, f"{class_name}.java")
 
-    new_method = _build_method(planner_output, description)
+    base_name = _tc_name_to_method(tc_name) if tc_name else planner_output.get("testMethodName", "testCase")
+    existing = _existing_method_names(file_path)
+    if base_name in existing:
+        method_name = _llm_rename(tc_name or base_name, description, existing)
+    else:
+        method_name = base_name
+
+    new_method = _build_method(planner_output, description, method_name)
 
     if os.path.exists(file_path):
         with open(file_path) as f:

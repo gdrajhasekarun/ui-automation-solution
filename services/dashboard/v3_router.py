@@ -265,6 +265,29 @@ def _selector_from_element(el: dict) -> str:
     return el.get("label") or el.get("name") or el.get("inferredName") or ""
 
 
+def _hydrate_graph_elements(raw: dict) -> dict:
+    """
+    Re-hydrate node.elements from globalElements + ownElements for graphs written
+    in the split format. Safe to call on old-format graphs (no-op if ownElements absent).
+    Returns the same dict mutated in place (for efficiency).
+    """
+    global_elements = raw.get("globalElements") or {}
+    if not global_elements:
+        return raw  # old-format graph — node.elements is already the full set
+
+    raw_nodes = raw.get("nodes", {})
+    nodes_iter = raw_nodes.values() if isinstance(raw_nodes, dict) else raw_nodes
+    for node in nodes_iter:
+        if "ownElements" in node:
+            inherited = [
+                global_elements[eid]
+                for eid in (node.get("inheritedElementIds") or [])
+                if eid in global_elements
+            ]
+            node["elements"] = inherited + (node.get("ownElements") or [])
+    return raw
+
+
 def _normalize_v3_graph(raw: dict) -> dict:
     """
     Convert a V3 crawler graph (nodes as Record, V3 element schema) into the
@@ -276,28 +299,39 @@ def _normalize_v3_graph(raw: dict) -> dict:
 
     The caller passes whichever source they have; this function only normalizes shape.
     """
+    raw = _hydrate_graph_elements(raw)
     raw_nodes = raw.get("nodes", {})
     raw_edges = raw.get("edges", [])
     raw_meta  = raw.get("meta", {})
 
     # ── Normalise nodes ────────────────────────────────────────────────────────
+    def _normalize_element(el: dict) -> dict:
+        new_el = dict(el)
+        if "selectorKey" not in new_el or not new_el["selectorKey"]:
+            new_el["selectorKey"] = _selector_from_element(el)
+        if "actionType" not in new_el or not new_el["actionType"]:
+            new_el["actionType"] = el.get("actionType") or _infer_action_type(el)
+        if "name" not in new_el or not new_el["name"]:
+            new_el["name"] = el.get("label") or el.get("inferredName") or el.get("name") or el.get("role") or ""
+        return new_el
+
+    # Normalize globalElements (dict of elementId -> element)
+    raw_global = raw.get("globalElements") or {}
+    normalized_global = {eid: _normalize_element(el) for eid, el in raw_global.items()}
+
     if isinstance(raw_nodes, list):
         # Already V2-style array — just ensure selectorKey/actionType exist
         nodes = []
         for node in raw_nodes:
-            new_els = []
-            for el in node.get("elements", []):
-                new_el = dict(el)
-                if "selectorKey" not in new_el or not new_el["selectorKey"]:
-                    new_el["selectorKey"] = _selector_from_element(el)
-                if "actionType" not in new_el or not new_el["actionType"]:
-                    new_el["actionType"] = el.get("actionType") or _infer_action_type(el)
-                if "name" not in new_el or not new_el["name"]:
-                    new_el["name"] = (el.get("label") or el.get("inferredName")
-                                      or el.get("name") or el.get("role") or "")
-                new_els.append(new_el)
+            new_els = [_normalize_element(el) for el in node.get("elements", [])]
             ref = node.get("pageRef") or _page_ref_name(node)
-            nodes.append({**node, "elements": new_els, "pageRef": ref})
+            own_els = [_normalize_element(el) for el in node["ownElements"]] if "ownElements" in node else None
+            entry = {**node, "elements": new_els, "pageRef": ref}
+            if own_els is not None:
+                entry["ownElements"] = own_els
+            if node.get("inheritedElementIds"):
+                entry["inheritedElementIds"] = node["inheritedElementIds"]
+            nodes.append(entry)
     else:
         # V3 Record<nodeId, node> format — convert to list
         nodes = []
@@ -318,7 +352,7 @@ def _normalize_v3_graph(raw: dict) -> dict:
                 })
             unf = node.get("unfilledFields", [])
             ref = _page_ref_name(node)
-            nodes.append({
+            entry = {
                 "nodeId":       node_id,
                 "url":          node.get("url", ""),
                 "title":        node.get("title", ""),
@@ -328,7 +362,12 @@ def _normalize_v3_graph(raw: dict) -> dict:
                 "uiLibrary":    node.get("uiLibrary") or "",
                 "elements":     new_els,
                 "assertableElements": [_selector_from_element({"_selector": f.get("fieldId", "")}) for f in unf],
-            })
+            }
+            if "ownElements" in node:
+                entry["ownElements"] = [_normalize_element(el) for el in node["ownElements"]]
+            if node.get("inheritedElementIds"):
+                entry["inheritedElementIds"] = node["inheritedElementIds"]
+            nodes.append(entry)
 
     # ── Normalise edges ────────────────────────────────────────────────────────
     edges = []
@@ -352,9 +391,10 @@ def _normalize_v3_graph(raw: dict) -> dict:
         "summary":    raw_meta.get("summary", ""),
         "unfilledFields": raw_meta.get("unfilledFields", 0),
         "eval":       raw_meta.get("eval"),
+        "llmUsage":   raw_meta.get("llmUsage"),
     }
 
-    return {"nodes": nodes, "edges": edges, "meta": meta}
+    return {"nodes": nodes, "edges": edges, "globalElements": normalized_global, "meta": meta}
 
 
 @router.get("/graph/{app_id}")

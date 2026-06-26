@@ -14,7 +14,7 @@ function stableId(selector: string, label: string): string {
   return createHash('sha1').update(`${selector}|${label}`).digest('hex').slice(0, 10)
 }
 
-function classifyElementType(tag: string, role: string, inputType: string): CapturedElement['elementType'] {
+function classifyElementType(tag: string, role: string, inputType: string, selector = ''): CapturedElement['elementType'] {
   if (tag === 'input') {
     if (inputType === 'radio')    return 'radio'
     if (inputType === 'checkbox') return 'checkbox'
@@ -23,19 +23,23 @@ function classifyElementType(tag: string, role: string, inputType: string): Capt
   }
   if (tag === 'textarea')  return 'textarea'
   if (tag === 'select')    return 'select'
-  if (tag === 'button')    return 'button'
   if (tag === 'a')         return 'link'
 
   const r = role.toLowerCase()
   if (r === 'radio')      return 'radio'
   if (r === 'checkbox')   return 'checkbox'
-  if (r === 'button')     return 'button'
   if (r === 'link')       return 'link'
   if (r === 'tab')        return 'tab'
   if (r === 'option')     return 'combobox'   // autocomplete suggestion — treat as a fill, not navigation
   if (r === 'combobox' || r === 'listbox') return 'combobox'
   if (r === 'switch' || r === 'togglebutton') return 'toggle'
   if (r === 'textbox')    return 'textbox'
+
+  // Custom dropdown triggers: id/class contains "dropdown", or aria-haspopup indicates a menu/listbox
+  const sel = selector.toLowerCase()
+  if (sel.includes('dropdown') || sel.includes('select') || sel.includes('picker')) return 'select'
+
+  if (tag === 'button' || r === 'button') return 'button'
 
   return 'other'
 }
@@ -260,7 +264,7 @@ export async function capturePageElements(
     captured.push({
       id,
       tag:              raw.tag,
-      elementType:      classifyElementType(raw.tag, raw.role, raw.inputType),
+      elementType:      classifyElementType(raw.tag, raw.role, raw.inputType, raw.selector),
       role:             raw.role || null,
       name:             raw.label,
       label:            raw.label,
@@ -292,3 +296,30 @@ export function findNewElements(prev: CapturedElement[], curr: CapturedElement[]
 
 // No-op — live DOM approach does not inject attributes
 export async function cleanupCrawlerAttrs(_page: Page): Promise<void> {}
+
+export async function getPageHeading(page: Page): Promise<string> {
+  const heading = await page.evaluate(() => {
+    const selectors = ['h1', 'h2', '[role="heading"][aria-level="1"]', '[role="heading"]']
+    for (const sel of selectors) {
+      const el = document.querySelector(sel)
+      if (!el) continue
+      const text = el.textContent?.trim().replace(/\s+/g, ' ') ?? ''
+      if (text.length > 2 && text.length < 120) return text
+    }
+    return null
+  }).catch(() => null)
+
+  return heading ?? await page.title()
+}
+
+const GLOBAL_ELEMENT_LABELS = new Set([
+  'home', 'login', 'log in', 'logout', 'log out', 'sign in', 'sign out',
+  'register', 'back', 'cancel', 'close', 'skip', 'menu', 'search',
+  'help', 'contact', 'about', 'sitemap', 'privacy', 'terms',
+  'select a language', 'select a language english',
+  'click for accessibility menu', 'font decrease', 'font increase',
+])
+
+export function isGlobalElement(el: CapturedElement): boolean {
+  return GLOBAL_ELEMENT_LABELS.has(el.name.trim().toLowerCase())
+}

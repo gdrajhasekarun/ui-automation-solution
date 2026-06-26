@@ -7,7 +7,7 @@ logger = logging.getLogger("generator.registry")
 
 
 def _pascal(s: str) -> str:
-    return "".join(w.capitalize() for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
+    return "".join(w[0].upper() + w[1:] for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
 
 
 def _method_name(prefix: str, label: str) -> str:
@@ -32,7 +32,48 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
         from_id = e.get("from") or e.get("fromNodeId", "")
         edges_by_from.setdefault(from_id, []).append(e)
 
+    def _class_name_for_node(node: dict) -> str:
+        page_ref = (node.get("pageRef") or "").strip()
+        if page_ref and page_ref.lower() not in {"", "page", "error page", "untitled"}:
+            raw = _pascal(page_ref)
+            return raw if raw.endswith("Page") else raw + "Page"
+        label = (node.get("nodeName") or node.get("heading") or node.get("title") or "Page").strip()
+        return _pascal(label) + "Page"
+
     registry = []
+
+    # Inherited GlobalTabs methods — registered under each child page that has the element
+    global_elements = graph.get("globalElements") or {}
+    if global_elements:
+        for node_id, node in nodes_dict.items():
+            inherited_ids = node.get("inheritedElementIds") or []
+            if not inherited_ids:
+                continue
+            class_name = _class_name_for_node(node)
+            for eid in inherited_ids:
+                elem = global_elements.get(eid)
+                if not elem:
+                    continue
+                sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
+                if not sk:
+                    continue
+                label = elem.get("label") or elem.get("name") or sk
+                action = elem.get("actionType") or elem.get("elementType") or "click"
+                method_name = _method_name("click", label)
+                registry.append({
+                    "className":       class_name,
+                    "methodName":      method_name,
+                    "selectorKey":     sk,
+                    "actionType":      action,
+                    "parameterNames":  [],
+                    "returnType":      "void",
+                    "isNavigation":    False,
+                    "navigatesTo":     "",
+                    "description":     f"clicks the {label} on {class_name} (inherited from GlobalTabs)",
+                    "allAttributes":   elem.get("allAttributes") or {},
+                    "selectorFallbacks": elem.get("selectorFallbacks") or [],
+                })
+
     for node_id, node in nodes_dict.items():
         page_ref = (node.get("pageRef") or "").strip()
         if page_ref and page_ref.lower() not in {"", "page", "error page", "untitled"}:
@@ -49,14 +90,20 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
             if (e.get("selectorKey") or e.get("trigger", {}).get("elementName") or e.get("label"))
         }
 
-        seen = set()
+        seen_sk = set()
+        seen_methods: set = set()
         for elem in node.get("elements", []):
             sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-            if not sk or sk in seen:
+            if not sk:
                 continue
-            seen.add(sk)
             label = elem.get("label") or elem.get("name") or sk
-            action = elem.get("actionType") or elem.get("elementType") or "click"
+            _raw = (elem.get("actionType") or elem.get("elementType") or "").lower()
+            if _raw in ("textbox", "textarea", "fill", "input"):
+                action = "fill"
+            elif _raw in ("select", "combobox"):
+                action = "select"
+            else:
+                action = "click"
 
             is_nav = sk in edge_sk
             navigates_to = ""

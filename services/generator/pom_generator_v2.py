@@ -72,7 +72,7 @@ def _pick_method_name(prefix: str, label: str, sk: str, elem: dict,
 # ── Shared helpers (copied from pom_generator.py) ────────────────────────────
 
 def _pascal(s: str) -> str:
-    return "".join(w.capitalize() for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
+    return "".join(w[0].upper() + w[1:] for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
 
 
 _GENERIC_LABELS = {"input", "button", "element", "text", "select", "checkbox", "radio", "a", "link", ""}
@@ -161,6 +161,10 @@ def _parse_locator(selector_key: str) -> tuple[str, str]:
 
 
 def _class_name_from_node(node: dict) -> str:
+    # Prefer LLM-assigned className from the crawler annotation pass
+    if node.get("className"):
+        cn = node["className"]
+        return cn if cn.endswith("Page") else cn + "Page"
     _SKIP_TITLES = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
     node_name = (node.get("nodeName") or "").strip()
     if node_name and node_name.lower() not in _SKIP_TITLES and len(node_name) <= 80:
@@ -221,8 +225,7 @@ def _extract_elements(node: dict, node_id: str, graph: dict, name_registry: dict
         name_registry = {}
     raw_nodes = graph.get("nodes", {})
     def _node_class(n: dict) -> str:
-        raw = n.get("pageRef") or ""
-        return _pascal(raw) if raw else _class_name_from_node(n)
+        return _class_name_from_node(n)
 
     if isinstance(raw_nodes, list):
         node_class_map: dict[str, str] = {
@@ -249,12 +252,19 @@ def _extract_elements(node: dict, node_id: str, graph: dict, name_registry: dict
         edge_targets[elem_id] = (node_class_map.get(to_nid, "UnknownPage"), to_nid == node_id)
 
     elements = node.get("elements", [])
-    seen_sk: set[str] = set()
+    trigger_ids: set[str] = {e.get("trigger", {}).get("elementId", "") for e in edges_from}
+    seen_sk: dict[str, int] = {}  # sk → index in unique_elements
     unique_elements: list[dict] = []
     for elem in elements:
         sk = elem.get("selectorKey") or elem.get("_selector") or ""
-        if sk and sk not in seen_sk:
-            seen_sk.add(sk)
+        if not sk:
+            continue
+        elem_id = elem.get("id", "")
+        if sk in seen_sk:
+            if elem_id in trigger_ids:
+                unique_elements[seen_sk[sk]] = elem
+        else:
+            seen_sk[sk] = len(unique_elements)
             unique_elements.append(elem)
 
     seen_const: set[str] = set()
@@ -361,10 +371,10 @@ def _generate_java(node: dict, node_id: str, graph: dict, class_name: str,
     return (
         HEADER +
         f"package pages;\n\n"
-        f"import base.BasePage;\n"
+        f"import base.GlobalTabs;\n"
         f"import base.Locator;\n"
         f"import org.openqa.selenium.WebDriver;\n\n"
-        f"public class {class_name} extends BasePage {{\n\n"
+        f"public class {class_name} extends GlobalTabs {{\n\n"
         + "\n".join(constants_lines) + "\n\n"
         f"    public {class_name}(WebDriver driver) {{\n"
         f"        super(driver);\n"
@@ -462,7 +472,7 @@ def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str,
         f"using OpenQA.Selenium;\n"
         f"using Base;\n\n"
         f"namespace Pages\n{{\n"
-        f"    public class {class_name} : BasePage\n"
+        f"    public class {class_name} : GlobalTabs\n"
         f"    {{\n"
         + "\n".join(constants_lines) + "\n\n"
         f"        public {class_name}(IWebDriver driver) : base(driver) {{ }}\n\n"
@@ -547,11 +557,16 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
 
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalTabs" if has_base else ""
+    base_import = "const { GlobalTabs } = require('./GlobalTabs');\n" if has_base else ""
+    super_call = "        super(page);\n" if has_base else ""
     return (
         HEADER +
-        f"class {class_name} {{\n"
+        base_import +
+        f"class {class_name}{base_clause} {{\n"
         f"    constructor(page) {{\n"
-        f"        this.page = page;\n"
+        f"{super_call}"
         + "\n".join(constructor_lines) + "\n"
         f"    }}\n\n"
         + "\n\n".join(methods) + "\n"
@@ -636,18 +651,26 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
                 f"    }}"
             )
 
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalTabs" if has_base else ""
+    base_import = "import { GlobalTabs } from './GlobalTabs';\n" if has_base else ""
+    super_call = "        super(page);\n" if has_base else "        this.page = page;\n"
+    page_field = "" if has_base else "    readonly page: Page;\n"
+
     import_lines = "import { Page, Locator } from '@playwright/test';\n"
+    if base_import:
+        import_lines += base_import
     for cls in sorted(imported_classes):
         import_lines += f"import {{ {cls} }} from './{cls}';\n"
 
     return (
         HEADER +
         import_lines + "\n"
-        f"export class {class_name} {{\n"
-        f"    readonly page: Page;\n"
+        f"export class {class_name}{base_clause} {{\n"
+        + page_field
         + "\n".join(field_declarations) + "\n\n"
         f"    constructor(page: Page) {{\n"
-        f"        this.page = page;\n"
+        + super_call
         + "\n".join(constructor_lines) + "\n"
         f"    }}\n\n"
         + "\n\n".join(methods) + "\n"
@@ -811,12 +834,18 @@ def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_nam
                 f"        return self"
             )
 
+    has_base = bool(graph.get("globalElements"))
+    base_import = "from global_tabs import GlobalTabs\n" if has_base else ""
+    base_clause = "(GlobalTabs)" if has_base else ""
+    super_call = "        super().__init__(page)\n" if has_base else "        self.page = page\n"
+
     return (
         HEADER_PY +
-        "from playwright.sync_api import Page, Locator\n\n\n"
-        f"class {class_name}:\n"
+        "from playwright.sync_api import Page, Locator\n"
+        + base_import + "\n\n"
+        f"class {class_name}{base_clause}:\n"
         f"    def __init__(self, page: Page):\n"
-        f"        self.page = page\n"
+        + super_call
         + "\n".join(constructor_lines) + "\n\n"
         + "\n\n".join(methods) + "\n"
     )
@@ -894,9 +923,13 @@ def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str,
                 f"    }}"
             )
 
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalTabs" if has_base else ""
+    base_import = "const { GlobalTabs } = require('./GlobalTabs');\n" if has_base else ""
     return (
         HEADER +
-        f"class {class_name} {{\n"
+        base_import +
+        f"class {class_name}{base_clause} {{\n"
         + "\n".join(getter_lines) + "\n\n"
         + "\n\n".join(methods) + "\n"
         f"}}\n\n"
@@ -965,9 +998,13 @@ def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str,
                 f"    }}"
             )
 
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalTabs" if has_base else ""
+    base_import = "import { GlobalTabs } from './GlobalTabs';\n" if has_base else ""
     return (
         HEADER +
-        f"export class {class_name} {{\n"
+        base_import +
+        f"export class {class_name}{base_clause} {{\n"
         + "\n".join(getter_lines) + "\n\n"
         + "\n\n".join(methods) + "\n"
         f"}}\n"
@@ -1057,6 +1094,182 @@ def _nodes_iter_from_graph(graph: dict):
     return list(raw_nodes.items())
 
 
+def _hydrate_graph_elements(graph: dict) -> dict:
+    """Re-hydrate node.elements from globalElements + ownElements for split-format graphs.
+    Safe to call on old-format graphs (no-op if ownElements absent)."""
+    global_elements = graph.get("globalElements") or {}
+    if not global_elements:
+        return graph
+    raw_nodes = graph.get("nodes", {})
+    nodes_iter = raw_nodes.values() if isinstance(raw_nodes, dict) else raw_nodes
+    for node in nodes_iter:
+        if "ownElements" in node:
+            inherited = [
+                global_elements[eid]
+                for eid in (node.get("inheritedElementIds") or [])
+                if eid in global_elements
+            ]
+            node["elements"] = inherited + (node.get("ownElements") or [])
+    return graph
+
+
+def _generate_base_page(global_elements: dict, target_tool: str, output_dir: str,
+                        name_registry: dict) -> str | None:
+    """Generate a BasePage class file from globalElements for the given target_tool.
+    Returns the file path written, or None if nothing was generated."""
+    if not global_elements:
+        return None
+
+    elements = list(global_elements.values())
+    fake_node = {"elements": elements}
+    fake_graph = {"nodes": {}, "edges": []}
+    elem_consts, _ = _extract_elements(fake_node, "__base__", fake_graph, name_registry)
+    if not elem_consts:
+        return None
+
+    def _java_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    if target_tool == "selenium-java":
+        constants = "\n".join(
+            f'    protected static final Locator {cname} = new Locator("{loc_type}", "{_java_str(loc_val)}");'
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    public void click{cname}() {{ click({cname}); }}"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER +
+            "package base;\n\nimport org.openqa.selenium.WebDriver;\nimport base.BasePage;\n\n"
+            "public class GlobalTabs extends BasePage {\n\n"
+            f"{constants}\n\n"
+            "    public GlobalTabs(WebDriver driver) { super(driver); }\n\n"
+            f"{methods}\n"
+            "}\n"
+        )
+        path = os.path.join(output_dir, "GlobalTabs.java")
+
+    elif target_tool == "selenium-csharp":
+        constants = "\n".join(
+            f"    protected static readonly By {cname} = {_cs_by(loc_type, loc_val)};"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    public void Click{cname}() => Click({cname});"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER +
+            "using OpenQA.Selenium;\nusing Base;\n\nnamespace Base {\n"
+            "    public class GlobalTabs : BasePage {\n\n"
+            f"{constants}\n\n"
+            "        public GlobalTabs(IWebDriver driver) : base(driver) { }\n\n"
+            f"{methods}\n"
+            "    }\n}\n"
+        )
+        path = os.path.join(output_dir, "GlobalTabs.cs")
+
+    elif target_tool == "selenium-python":
+        constants = "\n".join(
+            f"    {cname} = ({_py_locator(loc_type, loc_val)})"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    def click_{cname.lower()}(self):\n        self.click(self.{cname})"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER_PY +
+            "from selenium.webdriver.common.by import By\nfrom base_page import BasePage\n\n"
+            "class GlobalTabs(BasePage):\n"
+            "    def __init__(self, driver):\n"
+            "        super().__init__(driver)\n\n"
+            f"{constants}\n\n"
+            f"{methods}\n"
+        )
+        path = os.path.join(output_dir, "global_tabs.py")
+
+    elif target_tool in ("playwright-js", "cypress-js"):
+        fields = "\n".join(
+            f"        this.{cname.lower()} = page.locator({_pw_locator(loc_type, loc_val)});"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    async click{cname}() {{ await this.{cname.lower()}.click(); }}"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER +
+            "const { BasePage } = require('./BasePage');\n\n"
+            "class GlobalTabs extends BasePage {\n"
+            "    constructor(page) {\n"
+            "        super(page);\n"
+            f"{fields}\n"
+            "    }\n\n"
+            f"{methods}\n"
+            "}\n\n"
+            "module.exports = { GlobalTabs };\n"
+        )
+        path = os.path.join(output_dir, "GlobalTabs.js")
+
+    elif target_tool in ("playwright-ts", "cypress-ts"):
+        decls = "\n".join(
+            f"    readonly {cname.lower()}: import('@playwright/test').Locator;"
+            for cname, _, _, _ in elem_consts
+        )
+        inits = "\n".join(
+            f"        this.{cname.lower()} = page.locator({_pw_locator(loc_type, loc_val)});"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    async click{cname}(): Promise<void> {{ await this.{cname.lower()}.click(); }}"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER +
+            "import { Page } from '@playwright/test';\nimport { BasePage } from './BasePage';\n\n"
+            "export class GlobalTabs extends BasePage {\n"
+            f"{decls}\n\n"
+            "    constructor(page: Page) {\n"
+            "        super(page);\n"
+            f"{inits}\n"
+            "    }\n\n"
+            f"{methods}\n"
+            "}\n"
+        )
+        path = os.path.join(output_dir, "GlobalTabs.ts")
+
+    elif target_tool == "playwright-python":
+        fields = "\n".join(
+            f"        self.{cname.lower()} = page.locator({_pw_py_locator(loc_type, loc_val)})"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        methods = "\n".join(
+            f"    def click_{cname.lower()}(self):\n        self.{cname.lower()}.click()"
+            for cname, _, _, _ in elem_consts
+        )
+        content = (
+            HEADER_PY +
+            "from playwright.sync_api import Page\nfrom base_page import BasePage\n\n"
+            "class GlobalTabs(BasePage):\n"
+            "    def __init__(self, page: Page):\n"
+            "        super().__init__(page)\n"
+            f"{fields}\n\n"
+            f"{methods}\n"
+        )
+        path = os.path.join(output_dir, "global_tabs.py")
+
+    else:
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+    logger.info(f"Generated GlobalTabs ({target_tool}) — {len(elem_consts)} shared locators → {path}")
+    return path
+
+
 def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "selenium-java") -> dict:
     if target_tool not in _GENERATORS:
         logger.warning(f"Unknown target_tool '{target_tool}', defaulting to selenium-java")
@@ -1067,9 +1280,19 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
     with open(graph_path) as f:
         graph = json.load(f)
 
+    # Re-hydrate node.elements for split-format graphs (globalElements + ownElements)
+    graph = _hydrate_graph_elements(graph)
+
     # Load persisted name registry so element/method names survive re-runs
     registry_path = os.path.join(os.path.dirname(graph_path), "name_registry.json")
     name_registry = _load_name_registry(registry_path)
+
+    global_elements = graph.get("globalElements") or {}
+    has_base_page = bool(global_elements)
+
+    # Generate BasePage from shared elements (globalElements → BasePage class)
+    if has_base_page:
+        _generate_base_page(global_elements, target_tool, output_dir, name_registry)
 
     nodes_iter = _nodes_iter_from_graph(graph)
 
@@ -1078,26 +1301,33 @@ def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "seleni
     seen_classes: set[str] = set()
 
     for node_id, node in nodes_iter:
-        elements = node.get("elements", [])
+        # Use ownElements (page-unique elements) for locator generation so inherited ones
+        # (already in BasePage) are not redeclared in the page class.
+        inherited_ids = set(node.get("inheritedElementIds") or [])
+        if inherited_ids:
+            page_node = {**node, "elements": [e for e in node.get("elements", []) if e.get("id") not in inherited_ids]}
+        else:
+            page_node = node
+
+        elements = page_node.get("elements", [])
         if not elements:
             logger.info(f"Skipping {node.get('url', '?')} — no interactable elements")
             continue
 
-        raw_ref = node.get("pageRef") or ""
-        class_name = _pascal(raw_ref) if raw_ref else _class_name_from_node(node)
+        class_name = _class_name_from_node(node)
         if class_name in seen_classes:
             suffix = node_id[-4:]
             class_name = class_name[:-4] + suffix.capitalize() + "Page"
         seen_classes.add(class_name)
 
-        content = generate_fn(node, node_id, graph, class_name, name_registry)
+        content = generate_fn(page_node, node_id, graph, class_name, name_registry)
         file_path = os.path.join(output_dir, f"{class_name}{ext}")
 
         # If the target file doesn't exist yet, check whether another file already
         # covers the same page (can happen when duplicate nodes from auth-state
         # variants were merged but the first run had a different class name).
         if not os.path.exists(file_path) and target_tool == "selenium-java":
-            probe_consts, _ = _extract_elements(node, node_id, graph, {})
+            probe_consts, _ = _extract_elements(page_node, node_id, graph, {})
             existing_file = _find_existing_file_for_node(output_dir, ext, probe_consts)
             if existing_file:
                 _merge_into_existing_java(existing_file, content)
@@ -1171,8 +1401,7 @@ def update_incrementally_v2(diff_report_path: str, graph_path: str, output_dir: 
         if not elements:
             continue
 
-        raw_ref = node.get("pageRef") or ""
-        class_name = _pascal(raw_ref) if raw_ref else _class_name_from_node(node)
+        class_name = _class_name_from_node(node)
         if class_name in seen_classes:
             suffix = node_id[-4:]
             class_name = class_name[:-4] + suffix.capitalize() + "Page"

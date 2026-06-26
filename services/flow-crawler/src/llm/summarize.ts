@@ -16,7 +16,6 @@ export async function summarizeGraph(graph: CrawlerGraph, llm: BaseChatModel): P
 Nodes: {nodeCount}
 Edges: {edgeCount}
 Unfilled fields: {unfilledCount}
-LLM calls: {llmCallCount}
 Cache hits: {cacheHitCount}
 
 Sample pages:
@@ -28,7 +27,6 @@ Sample pages:
       nodeCount:    data.meta.totalNodes,
       edgeCount:    data.meta.totalEdges,
       unfilledCount: data.meta.unfilledFields,
-      llmCallCount: data.meta.llmCallCount,
       cacheHitCount: data.meta.cacheHitCount,
       nodeList,
     })

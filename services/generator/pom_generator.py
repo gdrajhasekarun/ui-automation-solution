@@ -158,13 +158,20 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
     elements = node.get("elements", [])
     assertable = node.get("assertableElements", [])
 
-    # ── Deduplicate elements by selectorKey ──────────────────────────────────
-    seen_sk: set[str] = set()
+    # ── Deduplicate elements by selectorKey (edge triggers take priority) ────
+    trigger_ids: set[str] = {e.get("trigger", {}).get("elementId", "") for e in edges_from}
+    seen_sk: dict[str, int] = {}  # sk → index in unique_elements
     unique_elements: list[dict] = []
     for elem in elements:
         sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-        if sk and sk not in seen_sk:
-            seen_sk.add(sk)
+        if not sk:
+            continue
+        elem_id = elem.get("id", "")
+        if sk in seen_sk:
+            if elem_id in trigger_ids:
+                unique_elements[seen_sk[sk]] = elem
+        else:
+            seen_sk[sk] = len(unique_elements)
             unique_elements.append(elem)
 
     # ── Build constant name → (type, value, element) map ────────────────────
@@ -296,6 +303,9 @@ def _safe_class_name(name: str) -> str:
 
 
 def _class_name_from_node(node: dict) -> str:
+    # Prefer LLM-assigned className from the crawler annotation pass
+    if node.get("className"):
+        return _safe_class_name(node["className"])
     # pageRef is the crawler-assigned semantic name — use it first
     page_ref = (node.get("pageRef") or "").strip()
     if page_ref and page_ref.lower() not in _SKIP_TITLES:

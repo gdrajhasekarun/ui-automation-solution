@@ -45,7 +45,6 @@ export async function captureNewTab(
     let description: string | undefined
     if (llm) {
       const meta = await namePageRef(title, url, elements, llm, {}, graph.usedPageRefNames)
-      graph.incrementLLMCalls()
       pageRef = graph.registerPageRef(meta.pageRef)
       description = meta.description || undefined
     }

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -9,9 +10,10 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import BackgroundTasks, FastAPI
 
-from config import DASHBOARD_URL, JAVA_DIR, PORT, SHARED_DIR
+from config import DASHBOARD_URL, JAVA_DIR, PORT, REPO_ROOT, SHARED_DIR
 from excel_reader import load_test_cases
-from step_planner import plan
+from plan_eval import eval_plan
+from step_planner import plan, _build_registry_index, _build_pageref_class_map
 from story_parser import parse_story
 from test_generator import generate
 
@@ -19,6 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger("planner-service")
 
 _jobs: dict = {}
+_app_llm_usage: dict[str, dict] = {}
 
 
 @asynccontextmanager
@@ -50,7 +53,15 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
         pass
 
 
+def _resolve_java_dir(java_dir: str) -> str:
+    """Resolve a possibly-relative java_dir against REPO_ROOT so paths like ./cms-app-crawler work."""
+    if os.path.isabs(java_dir):
+        return java_dir
+    return os.path.abspath(os.path.join(REPO_ROOT, java_dir))
+
+
 async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, java_dir: str, steps: list = []):
+    java_dir = _resolve_java_dir(java_dir)
     _jobs[job_id]["status"] = "running"
     try:
         await _notify(app_id, "PLANNER", f"Planning {tc_name}")
@@ -68,9 +79,27 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
         confidence = result.get("confidence", 0)
         status = result.get("status", "NEEDS_REVIEW")
 
+        # Deterministic plan eval (no LLM)
+        _sk_to_method, _sk_to_class = _build_registry_index(registry)
+        _pageref_to_class, _ = _build_pageref_class_map(graph, _sk_to_class)
+        result["eval"] = eval_plan(result, graph, registry, _pageref_to_class, _sk_to_method)
+
+        # Accumulate LLM usage per app
+        usage = result.pop("llm_usage", {})
+        if usage:
+            acc = _app_llm_usage.setdefault(app_id, {
+                "totalCalls": 0, "totalInputTokens": 0, "totalOutputTokens": 0,
+                "totalCostUsd": 0.0, "calls": []
+            })
+            acc["totalCalls"] += 1
+            acc["totalInputTokens"]  += usage.get("inputTokens", 0)
+            acc["totalOutputTokens"] += usage.get("outputTokens", 0)
+            acc["totalCostUsd"] = round(acc["totalCostUsd"] + usage.get("costUsd", 0.0), 6)
+            acc["calls"].append({**usage, "tcName": tc_name, "ts": int(time.time())})
+
         file_path = ""
         if confidence >= 0.75:
-            file_path = generate(result, app_id, java_dir, description)
+            file_path = generate(result, app_id, java_dir, description, tc_name)
 
         _jobs[job_id].update({
             "status": "done",
@@ -83,6 +112,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             "steps": result.get("steps", []),
             "class_name": result.get("startingClass", ""),
             "method_name": result.get("testMethodName", ""),
+            "eval": result.get("eval", {}),
         })
 
         await _notify(app_id, "PLANNER",
@@ -93,7 +123,9 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             "steps": result.get("steps", []),
             "review_reason": result.get("review_reason", ""),
             "method_name": result.get("testMethodName", ""),
-            "class_name": result.get("startingClass", "").replace("Page","") + "Tests"
+            "class_name": result.get("startingClass", "").replace("Page","") + "Tests",
+            "llm_usage": _app_llm_usage.get(app_id, {}),
+            "eval": result.get("eval", {})
         }))
         logger.info(f"Planning complete — {tc_name} confidence:{confidence:.2f} — service idle")
 
@@ -138,7 +170,7 @@ async def plan_run(body: dict, background_tasks: BackgroundTasks):
 @app.post("/plan/save")
 async def plan_save(body: dict):
     app_id   = body.get("app_id", "")
-    java_dir = body.get("java_dir", JAVA_DIR)
+    java_dir = _resolve_java_dir(body.get("java_dir", JAVA_DIR))
     saved: list = []
     for tc in body.get("test_cases", []):
         result      = tc.get("result") or {}
@@ -149,7 +181,7 @@ async def plan_save(body: dict):
         file_path   = ""
         if isinstance(result, dict) and confidence >= 0.75:
             try:
-                file_path = generate(result, app_id, java_dir, description)
+                file_path = generate(result, app_id, java_dir, description, tc_name)
             except Exception as e:
                 logger.error(f"generate() failed for {tc_name}: {e}")
         saved.append({
@@ -185,6 +217,13 @@ async def plan_batch(body: dict, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_run_batch)
     return {"job_id": job_id, "tc_count": len(test_cases), "status": "STARTED"}
+
+
+@app.get("/plan/usage/{app_id}")
+async def plan_usage(app_id: str):
+    return _app_llm_usage.get(app_id, {
+        "totalCalls": 0, "totalInputTokens": 0, "totalOutputTokens": 0, "totalCostUsd": 0.0, "calls": []
+    })
 
 
 @app.get("/status/{job_id}")

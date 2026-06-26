@@ -83,7 +83,6 @@ async function runJob(jobId: string, payload: ReturnType<typeof RequestPayloadSc
     job.node_count                 = result.nodeCount
     job.edge_count                 = result.edgeCount
     job.unfilled_fields            = result.unfilledFields
-    job.llm_call_count             = result.llmCallCount
     job.cache_hit_count            = result.cacheHitCount
     job.output_file                = result.outputFile
     job.summary                    = result.summary

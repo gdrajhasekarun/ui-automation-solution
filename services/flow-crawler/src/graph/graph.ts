@@ -3,6 +3,31 @@ import * as path from 'path'
 import type { Node, Edge, Graph, UILibrary, CapturedElement, Eval } from '../types.js'
 import { edgeId, nodeId, normalizeUrl } from './urlNormalizer.js'
 
+// ── Global element extraction threshold ───────────────────────────────────────
+// An element is promoted to globalElements if its stableId appears in at least
+// this fraction of all nodes OR in at least MIN_COUNT nodes (whichever is looser).
+const GLOBAL_THRESHOLD_RATIO = 0.5
+const GLOBAL_THRESHOLD_MIN   = 3
+
+/**
+ * Re-hydrate node.elements from globalElements + node.ownElements when reading
+ * a graph.json that was written in the split format.
+ * Safe to call on old-format graphs (no-op if ownElements is absent).
+ */
+export function hydrateGraphNodes(raw: Graph): Graph {
+  const globals = raw.globalElements ?? {}
+  for (const node of Object.values(raw.nodes)) {
+    if (node.ownElements !== undefined) {
+      const inherited = (node.inheritedElementIds ?? [])
+        .map(id => globals[id])
+        .filter((e): e is CapturedElement => !!e)
+      node.elements = [...inherited, ...node.ownElements]
+    }
+    // Old-format graphs already have node.elements — leave them untouched
+  }
+  return raw
+}
+
 // ── Branch condition inference ─────────────────────────────────────────────────
 // Maps URL path keywords to semantic condition names so that branching edges
 // get a human-readable label (e.g. "unauthenticated") instead of a raw URL.
@@ -28,6 +53,16 @@ const GENERIC_LABELS = new Set([
   'skip', 'pause', 'play', 'play/pause', 'next', 'previous', 'menu', 'home',
   'click for accessibility menu', 'sitemap', 'font decrease', 'font increase',
 ])
+
+export function deriveClassName(pageRef: string): string {
+  const words = pageRef
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 0)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+  const base = words.join('')
+  return base.endsWith('Page') ? base : base + 'Page'
+}
 
 export function derivePageRef(title: string, elements: CapturedElement[]): string {
   // Pull primary action elements — buttons and links with meaningful labels
@@ -62,14 +97,17 @@ export class CrawlerGraph {
   private seededNodeIds = new Set<string>()   // tracks nodes loaded from prior graph (not visited this run)
   private edges: Edge[] = []
   private edgeSet = new Set<string>()
-  private _llmCallCount = 0
   private _cacheHitCount = 0
   private _summary?: string
   private _eval?: Eval
+  private _llmUsage?: Graph['meta']['llmUsage']
   private _totalPredictedRoutes = 0
   private _confirmedPredictions = 0
   private _crawlErrors = 0
   private _annotatedAt?: string
+
+  // Global element registry — populated by extractGlobalElements() before write
+  readonly globalElements = new Map<string, CapturedElement>()
 
   private pageRefNames = new Set<string>()
 
@@ -107,6 +145,13 @@ export class CrawlerGraph {
     }
   }
 
+  /** Seed globalElements from a prior graph.json so the registry persists across runs */
+  seedGlobalElements(existing: Record<string, CapturedElement>): void {
+    for (const [id, el] of Object.entries(existing)) {
+      if (!this.globalElements.has(id)) this.globalElements.set(id, el)
+    }
+  }
+
   /** Seed existing edges from a prior graph.json so branch detection works across runs.
    *  Edges are replayed into this.edges and this.edgeSet so addEdge can detect
    *  when a new crawl run finds a different destination for the same trigger. */
@@ -122,16 +167,26 @@ export class CrawlerGraph {
   /** Current set of used pageRef names — pass to LLM so it avoids collisions */
   get usedPageRefNames(): Set<string> { return this.pageRefNames }
 
-  /** Register a pageRef as used. Returns the name unchanged. */
+  /** Register a pageRef as used. Appends a counter on collision. Returns the unique name. */
   registerPageRef(name: string): string {
-    this.pageRefNames.add(name.toLowerCase())
-    return name
+    const base = name.trim() || 'Untitled'
+    if (!this.pageRefNames.has(base.toLowerCase())) {
+      this.pageRefNames.add(base.toLowerCase())
+      return base
+    }
+    let counter = 2
+    while (this.pageRefNames.has(`${base.toLowerCase()} ${counter}`)) counter++
+    const unique = `${base} ${counter}`
+    this.pageRefNames.add(unique.toLowerCase())
+    return unique
   }
 
   addNode(id: string, data: Node): boolean {
     const isSeeded = this.seededNodeIds.has(id)
     if (this.nodes.has(id) && !isSeeded) return false  // already visited this run — skip
-    this.nodes.set(id, data)       // overwrite seeded placeholder with fresh crawl data
+    const existing = this.nodes.get(id)
+    const className = data.className ?? existing?.className
+    this.nodes.set(id, className ? { ...data, className } : data)
     this.seededNodeIds.delete(id)  // no longer just seeded — now a real visited node
     return true
   }
@@ -141,14 +196,25 @@ export class CrawlerGraph {
     if (existing) this.nodes.set(id, { ...existing, ...partial })
   }
 
+  /** Find an edge by its from/to/elementId triple — used to check for replay validation */
+  findEdge(from: string, to: string, elementId: string): Edge | undefined {
+    return this.edges.find(e => e.from === from && e.to === to && e.trigger.elementId === elementId)
+  }
+
+  updateEdge(id: string, partial: Partial<Pick<Edge, 'elementDiff' | 'validationResult' | 'spec'>>): void {
+    const edge = this.edges.find(e => e.id === id)
+    if (edge) Object.assign(edge, partial)
+  }
+
   addEdge(opts: {
     from: string; to: string
     trigger: Edge['trigger']
     label?: string
     condition?: string
-  }): void {
+    elementDiff?: Edge['elementDiff']
+  }): string | null {  // returns edge id so callers can attach elementDiff later
     const dedupeKey = `${opts.from}->${opts.to}->${opts.trigger.type}->${opts.trigger.elementId ?? ''}`
-    if (this.edgeSet.has(dedupeKey)) return
+    if (this.edgeSet.has(dedupeKey)) return null
     this.edgeSet.add(dedupeKey)
 
     // ── Branch detection ────────────────────────────────────────────────────
@@ -172,20 +238,26 @@ export class CrawlerGraph {
       condition = condition ?? inferCondition(this.nodes.get(opts.to)?.url ?? '')
     }
 
-    this.edges.push({
+    const newEdge: Edge = {
       id:          edgeId(),
       from:        opts.from,
       to:          opts.to,
       trigger:     opts.trigger,
       isBranching: existingIdx !== -1 ? true : undefined,
       condition:   condition || undefined,
-    })
+      elementDiff: opts.elementDiff,
+    }
+    this.edges.push(newEdge)
+    return newEdge.id
   }
 
-  incrementLLMCalls(n = 1) { this._llmCallCount += n }
   incrementCacheHits(n = 1) { this._cacheHitCount += n }
   setSummary(s: string) { this._summary = s }
   setEval(result: Eval): void { this._eval = result }
+  setLLMUsage(usage: NonNullable<Graph['meta']['llmUsage']>): void { this._llmUsage = usage }
+  setPathIntent(score: number, path: string[]): void {
+    if (this._eval) this._eval.pathIntent = { score, stepsRecorded: path.length, path }
+  }
   incrementPredictedRoutes(n: number): void { this._totalPredictedRoutes += n }
   incrementConfirmedPredictions(): void { this._confirmedPredictions++ }
   recordCrawlError(): void { this._crawlErrors++ }
@@ -193,7 +265,6 @@ export class CrawlerGraph {
 
   get nodeCount() { return this.nodes.size }
   get edgeCount()  { return this.edges.length }
-  get llmCallCount()  { return this._llmCallCount }
   get cacheHitCount() { return this._cacheHitCount }
 
   get unfilledCount(): number {
@@ -215,8 +286,85 @@ export class CrawlerGraph {
     return best
   }
 
+  /**
+   * Promote elements shared across ≥ threshold fraction of nodes (or ≥ MIN_COUNT nodes)
+   * into graph.globalElements. Per-node elements are split into:
+   *   node.ownElements         — elements unique to this page
+   *   node.inheritedElementIds — IDs of global elements that appear on this page
+   * node.elements is updated to the merged set so all runtime code stays unchanged.
+   */
+  extractGlobalElements(): void {
+    const allNodes = [...this.nodes.values()]
+    const totalNodes = allNodes.length
+    if (totalNodes < 2) return  // nothing to share with fewer than 2 pages
+
+    // Count how many nodes each element ID appears in
+    const freq = new Map<string, number>()
+    for (const node of allNodes) {
+      const seen = new Set<string>()
+      for (const el of node.elements ?? []) {
+        if (!seen.has(el.id)) {
+          seen.add(el.id)
+          freq.set(el.id, (freq.get(el.id) ?? 0) + 1)
+        }
+      }
+    }
+
+    const minCount  = Math.max(GLOBAL_THRESHOLD_MIN, Math.ceil(totalNodes * GLOBAL_THRESHOLD_RATIO))
+    const globalIds = new Set<string>()
+    for (const [id, count] of freq) {
+      if (count >= minCount) globalIds.add(id)
+    }
+
+    if (globalIds.size === 0) return
+
+    // Populate registry and split per-node elements
+    for (const node of allNodes) {
+      const ownElements: CapturedElement[]   = []
+      const inheritedIds: string[] = []
+      for (const el of node.elements ?? []) {
+        if (globalIds.has(el.id)) {
+          inheritedIds.push(el.id)
+          if (!this.globalElements.has(el.id)) this.globalElements.set(el.id, el)
+        } else {
+          ownElements.push(el)
+        }
+      }
+      node.ownElements         = ownElements
+      node.inheritedElementIds = inheritedIds
+      // node.elements stays as the full merged runtime set
+    }
+
+    console.log(`[GRAPH] Promoted ${this.globalElements.size} element(s) to globalElements (threshold: ≥${minCount}/${totalNodes} nodes)`)
+  }
+
   toJSON(): Graph {
+    // Serialize nodes using ownElements + inheritedElementIds (not full elements)
+    // so that globalElements are not duplicated per node in the output file.
+    const serializedNodes: Record<string, Node> = {}
+    for (const [id, node] of this.nodes) {
+      const { elements: _elements, ...rest } = node  // eslint-disable-line @typescript-eslint/no-unused-vars
+      // Resolve the full element list: inherited globals + own elements
+      const inheritedIds = node.inheritedElementIds ?? []
+      const inheritedElements = inheritedIds
+        .map(eid => this.globalElements.get(eid))
+        .filter((e): e is CapturedElement => e !== undefined)
+      const ownEls = node.ownElements ?? node.elements ?? []
+
+      serializedNodes[id] = {
+        ...rest,
+        elements:            [...inheritedElements, ...ownEls],
+        ownElements:         ownEls,
+        inheritedElementIds: inheritedIds,
+      }
+    }
+
+    const globalElementsObj = this.globalElements.size > 0
+      ? Object.fromEntries(this.globalElements)
+      : undefined
+
     return {
+      globalElements: globalElementsObj,
       meta: {
         crawledAt:      new Date().toISOString(),
         seedUrl:        this.seedUrl,
@@ -225,7 +373,6 @@ export class CrawlerGraph {
         totalNodes:     this.nodes.size,
         totalEdges:     this.edges.length,
         unfilledFields: this.unfilledCount,
-        llmCallCount:   this._llmCallCount,
         cacheHitCount:  this._cacheHitCount,
         summary:               this._summary,
         source:                'flow-crawler',
@@ -234,8 +381,9 @@ export class CrawlerGraph {
         crawlErrors:           this._crawlErrors || undefined,
         annotatedAt:           this._annotatedAt,
         eval:                  this._eval,
+        llmUsage:              this._llmUsage,
       },
-      nodes: Object.fromEntries(this.nodes),
+      nodes: serializedNodes,
       edges: this.edges,
     }
   }
@@ -386,6 +534,7 @@ export class CrawlerGraph {
 
   async writeToFile(filePath: string): Promise<void> {
     this.consolidateDuplicates()
+    this.extractGlobalElements()
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fs.writeFileSync(filePath, JSON.stringify(this.toJSON(), null, 2), 'utf8')
   }

@@ -62,7 +62,7 @@ export const api = createApi({
       query: (body) => ({ url: '/crawl/trigger', method: 'POST', body }),
     }),
 
-    getGraph: build.query<{ nodes: unknown[]; edges: unknown[]; meta: unknown }, string>({
+    getGraph: build.query<{ nodes: unknown[] | Record<string, unknown>; edges: unknown[]; globalElements?: Record<string, unknown>; meta: unknown }, string>({
       query: (appId) => `/graph/${encodeURIComponent(appId)}`,
     }),
 

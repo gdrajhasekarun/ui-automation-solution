@@ -7,7 +7,7 @@ import type { UploadFile } from 'antd/es/upload'
 import { useTheme } from '../theme'
 import { useAppSelector } from '../store'
 import { usePlanRunMutation, useSavePlanMutation, useLazyGetPlanStatusQuery } from '../store/api'
-import type { RawTestCase, RawTestCaseStep, PlanResult, PlanStep, Parameter } from '../types'
+import type { RawTestCase, RawTestCaseStep, PlanResult, PlanStep, Parameter, PlanEval } from '../types'
 
 const { Text } = Typography
 
@@ -58,6 +58,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
   const [planned, setPlanned]             = useState<Record<string, Planned>>({})
   const [planRunning, setPlanRunning]     = useState(false)
   const [saveError, setSaveError]         = useState('')
+  const [plannerUsage, setPlannerUsage]   = useState<{ totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } | null>(null)
   const [savedFiles, setSavedFiles]       = useState<{ cls: string; names: string[] }[]>([])
 
   const [planRun]          = usePlanRunMutation()
@@ -175,8 +176,16 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                 confidence:    payload.confidence,
                 class_name:    payload.class_name,
                 review_reason: payload.review_reason,
+                eval:          payload.eval as PlanEval | undefined,
               }
               setPlanned(prev => ({ ...prev, [name]: { status: 'complete', result, error: null } }))
+              // Refresh cumulative LLM usage after each plan
+              if (payload.llm_usage?.totalCalls != null) {
+                setPlannerUsage(payload.llm_usage)
+              } else {
+                fetch(`/api/plan/usage/${encodeURIComponent(appId)}`)
+                  .then(r => r.json()).then(u => setPlannerUsage(u)).catch(() => {})
+              }
               resolve()
             } catch { /* ignore non-JSON events */ }
           }
@@ -281,6 +290,14 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 600, color: C.text }}>Plan Test Cases</div>
             <div style={{ flex: 1 }} />
+            {plannerUsage && plannerUsage.totalCalls > 0 && (
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, marginRight: 16 }}>
+                LLM usage — planner:{' '}
+                <span style={{ color: C.text }}>${plannerUsage.totalCostUsd?.toFixed(5)}</span>
+                {' · '}{(plannerUsage.totalInputTokens ?? 0) + (plannerUsage.totalOutputTokens ?? 0)} tokens
+                {' · '}{plannerUsage.totalCalls} call{plannerUsage.totalCalls !== 1 ? 's' : ''}
+              </div>
+            )}
             <Button type="primary" loading={planRunning} onClick={runPlanner}>Run Planner</Button>
           </div>
 
@@ -364,6 +381,41 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                       {needsReview && result.review_reason && (
                         <div style={{ color: C.amber, fontSize: 12, marginTop: 8, fontFamily: "'IBM Plex Mono',monospace" }}>⚠ {result.review_reason}</div>
                       )}
+                      {result.eval && (() => {
+                        const ev = result.eval!
+                        const gradeColor = ev.grade === 'A' ? C.green : ev.grade === 'B' ? C.blue : ev.grade === 'C' ? C.amber : C.red
+                        const dimLabels: [string, string][] = [
+                          ['methodValidity',    'Methods'],
+                          ['pathCoverage',      'Path'],
+                          ['paramCompleteness', 'Params'],
+                          ['stepCompleteness',  'Steps'],
+                        ]
+                        return (
+                          <div style={{ marginTop: 10, padding: '10px 12px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Plan Eval</span>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, fontWeight: 700, color: gradeColor }}>{ev.grade}</span>
+                              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: C.text }}>{ev.score}/100</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: ev.flags?.length ? 6 : 0 }}>
+                              {dimLabels.map(([key, label]) => {
+                                const dim = ev.dimensions?.[key]
+                                if (!dim) return null
+                                const dc = dim.score >= 90 ? C.green : dim.score >= 70 ? C.amber : C.red
+                                return (
+                                  <div key={key} title={dim.notes} style={{ background: C.surface2, border: `1px solid ${dc}44`, borderRadius: 4, padding: '3px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: C.muted }}>{label}</span>
+                                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: dc }}>{Math.round(dim.score)}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            {ev.flags?.map((f, i) => (
+                              <div key={i} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: f.startsWith('ERROR') ? C.red : C.amber, marginTop: 2 }}>{f}</div>
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </>
                   )}
                 </div>
