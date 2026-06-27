@@ -175,6 +175,11 @@ async def plan_save(body: dict):
         status      = "READY"
         file_path   = ""
         if isinstance(result, dict):
+            # Ensure startingClass is set — derive from first step's pageClass if missing
+            if not result.get("startingClass"):
+                steps = result.get("steps", [])
+                if steps:
+                    result["startingClass"] = steps[0].get("pageClass", "")
             try:
                 file_path = generate(result, app_id, java_dir, description, tc_name)
             except Exception as e:

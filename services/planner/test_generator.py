@@ -132,6 +132,13 @@ def _build_method(planner_output: dict, description: str, method_name: str) -> s
     if final_assertion.get("methodName"):
         a_param = final_assertion.get("parameterName", "")
         chain_parts.append(f".{final_assertion['methodName']}({a_param})")
+    else:
+        # Default assertion: use expectedResult param if declared, else assertPageLoaded()
+        result_param = next((p["name"] for p in params if "expected" in p["name"].lower()), None)
+        if result_param:
+            chain_parts.append(f".assertResult({result_param})")
+        else:
+            chain_parts.append(".assertPageLoaded()")
 
     indent = "            "
     chain = f"\n{indent}".join(chain_parts)

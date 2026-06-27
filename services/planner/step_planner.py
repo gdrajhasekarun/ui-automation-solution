@@ -331,7 +331,10 @@ def _parse_result(state: PlannerState) -> PlannerState:
         )
         if len(valid) < len(steps):
             logger.warning(f"Dropped {len(steps) - len(valid)} steps missing methodName/pageClass")
-            result["steps"] = valid
+        result["steps"] = valid
+        # Ensure startingClass is always set — derive from first step's pageClass if LLM omitted it
+        if not result.get("startingClass") and valid:
+            result["startingClass"] = valid[0]["pageClass"]
         return {**state, "result": result, "error": ""}
     except json.JSONDecodeError as e:
         logger.warning(f"JSON parse failed: {e} — raw: {state['raw_response'][:200]}")
