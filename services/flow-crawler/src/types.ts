@@ -12,6 +12,7 @@ export const RequestPayloadSchema = z.object({
   max_depth:      z.number().default(10),
   headless:       z.boolean().default(true),
   target_flows:   z.array(z.string()).default([]),
+  flow_name:      z.string().optional(),   // focused flow intent — overrides config.flowName
   allowed_domain: z.string().optional(),
   llm_enabled:    z.boolean().default(true),
   output_dir:     z.string().optional(),

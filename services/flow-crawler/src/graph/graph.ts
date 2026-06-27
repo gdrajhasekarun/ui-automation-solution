@@ -248,6 +248,16 @@ export class CrawlerGraph {
       elementDiff: opts.elementDiff,
     }
     this.edges.push(newEdge)
+
+    // ── Alternative-path detection ──────────────────────────────────────────
+    // If the source node now has more than one outgoing edge (via ANY elements,
+    // not just the same one), all of them represent alternative paths and should
+    // be flagged so consumers know a choice exists at this node.
+    const outgoing = this.edges.filter(e => e.from === opts.from)
+    if (outgoing.length > 1) {
+      outgoing.forEach(e => { e.isBranching = true })
+    }
+
     return newEdge.id
   }
 
@@ -468,7 +478,18 @@ export class CrawlerGraph {
         const trgSim  = trgA.size === 0 && trgB.size === 0
           ? 1
           : jaccard(trgA, trgB)
-        if (trgSim < 0.5) continue   // completely different navigation paths — not the same page
+
+        if (sameUrl) {
+          // Same-URL nodes on the same page are definitively duplicates — BUT wizard steps
+          // share a normalizedUrl while being distinct states (e.g. before/after Accept).
+          // Skip the merge if there is a direct edge between the two nodes (wizard step).
+          const hasDirectEdge = this.edges.some(
+            e => (e.from === idA && e.to === idB) || (e.from === idB && e.to === idA)
+          )
+          if (hasDirectEdge) continue
+        } else if (trgSim < 0.5) {
+          continue   // completely different navigation paths — not the same page
+        }
 
         // Merge: canonical = node with more elements (richer capture wins); prefer visited over seeded
         const aIsSeeded = this.seededNodeIds.has(idA)

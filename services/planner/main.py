@@ -97,16 +97,11 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             acc["totalCostUsd"] = round(acc["totalCostUsd"] + usage.get("costUsd", 0.0), 6)
             acc["calls"].append({**usage, "tcName": tc_name, "ts": int(time.time())})
 
-        file_path = ""
-        if confidence >= 0.75:
-            file_path = generate(result, app_id, java_dir, description, tc_name)
-
         _jobs[job_id].update({
             "status": "done",
             "tc_name": tc_name,
             "confidence": confidence,
             "planner_status": status,
-            "file_path": file_path,
             "review_reason": result.get("review_reason", ""),
             "parameters": result.get("parameters", []),
             "steps": result.get("steps", []),
@@ -119,7 +114,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             f"Planning complete — {tc_name} confidence:{confidence:.2f} status:{status}")
         await _notify(app_id, "PLANNER_RESULT", json.dumps({
             "tc_name": tc_name, "status": status, "confidence": confidence,
-            "file_path": file_path, "parameters": result.get("parameters", []),
+            "parameters": result.get("parameters", []),
             "steps": result.get("steps", []),
             "review_reason": result.get("review_reason", ""),
             "method_name": result.get("testMethodName", ""),
@@ -177,9 +172,9 @@ async def plan_save(body: dict):
         tc_name     = tc.get("tc_name", "")
         description = (result.get("description") or tc_name) if isinstance(result, dict) else tc_name
         confidence  = result.get("confidence", 0) if isinstance(result, dict) else 0
-        status      = result.get("status", "NEEDS_REVIEW") if isinstance(result, dict) else "NEEDS_REVIEW"
+        status      = "READY"
         file_path   = ""
-        if isinstance(result, dict) and confidence >= 0.75:
+        if isinstance(result, dict):
             try:
                 file_path = generate(result, app_id, java_dir, description, tc_name)
             except Exception as e:
@@ -192,7 +187,7 @@ async def plan_save(body: dict):
             "class_name":    result.get("startingClass", "") if isinstance(result, dict) else "",
             "method_name":   result.get("testMethodName", "") if isinstance(result, dict) else "",
             "parameters":    result.get("parameters", []) if isinstance(result, dict) else [],
-            "review_reason": result.get("review_reason", "") if isinstance(result, dict) else "",
+            "review_reason": "" if isinstance(result, dict) else "",
         })
     return {"status": "ok", "saved": saved}
 

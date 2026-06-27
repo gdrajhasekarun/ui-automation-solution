@@ -106,6 +106,25 @@ def eval_plan(
     steps    = planner_output.get("steps", [])
     flags: list[str] = []
 
+    # Scope eval to the test path only — edges whose from-page appears in the plan
+    planned_classes = {s.get("pageClass", "") for s in steps if s.get("pageClass")}
+    raw_nodes = graph.get("nodes", {})
+    _node_map = raw_nodes if isinstance(raw_nodes, dict) else {
+        n.get("nodeId", str(i)): n for i, n in enumerate(raw_nodes)
+    }
+    _p2c = pageref_to_class or {}
+
+    def _path_cls(nid: str) -> str:
+        node = _node_map.get(nid, {})
+        pr = node.get("pageRef", "")
+        return _p2c.get(pr, pr)
+
+    path_edges = [
+        e for e in graph.get("edges", [])
+        if _path_cls(e.get("from") or e.get("fromNodeId", "")) in planned_classes
+    ]
+    path_graph = {**graph, "edges": path_edges}
+
     # ── 1. Method validity ───────────────────────────────────────────────────
     method_set = _build_method_set(registry)
     valid_count = 0
@@ -119,7 +138,7 @@ def eval_plan(
     mv_notes = f"{valid_count}/{len(steps)} methods found in registry"
 
     # ── 2. Path coverage ─────────────────────────────────────────────────────
-    edge_pairs = _edge_class_sequence(graph, pageref_to_class or {})
+    edge_pairs = _edge_class_sequence(path_graph, pageref_to_class or {})
     step_classes = [s.get("pageClass", "") for s in steps if s.get("pageClass")]
     # Check how many expected from_classes appear in the step sequence
     if edge_pairs:
@@ -140,7 +159,7 @@ def eval_plan(
         flags.append(f"WARN: {len(param_required) - param_correct} fill step(s) missing hasParameter=true")
 
     # ── 4. Step completeness (navigation trigger coverage) ────────────────────
-    required_clicks = _required_click_methods(graph, pageref_to_class or {}, sk_to_method or {})
+    required_clicks = _required_click_methods(path_graph, pageref_to_class or {}, sk_to_method or {})
     if required_clicks:
         covered = 0
         for req in required_clicks:

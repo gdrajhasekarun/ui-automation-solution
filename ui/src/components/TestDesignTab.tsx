@@ -1,17 +1,15 @@
 import React, { useState } from 'react'
-import { Button, Upload, Typography, Table, Checkbox, Tag, message } from 'antd'
-import { InboxOutlined } from '@ant-design/icons'
+import { Button, Upload, Typography, Table, Checkbox, Tag, message, Modal, Input, Switch, Tooltip } from 'antd'
+import { InboxOutlined, EditOutlined, PlusOutlined, ReloadOutlined, DeleteOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
 import type { CheckboxChangeEvent } from 'antd/es/checkbox'
 import type { TableColumnsType } from 'antd'
 import type { UploadFile } from 'antd/es/upload'
 import { useTheme } from '../theme'
 import { useAppSelector } from '../store'
-import { usePlanRunMutation, useSavePlanMutation, useLazyGetPlanStatusQuery } from '../store/api'
+import { usePlanRunMutation, useSavePlanMutation, useLazyGetPlanStatusQuery, useTriggerCrawlMutation } from '../store/api'
 import type { RawTestCase, RawTestCaseStep, PlanResult, PlanStep, Parameter, PlanEval } from '../types'
 
 const { Text } = Typography
-
-
 
 function ConfBadge({ conf }: { conf?: number | null }) {
   if (conf == null) return null
@@ -42,14 +40,50 @@ function StepIndicator({ step }: { step: number }) {
 type PlanStatus = 'not_started' | 'in_progress' | 'complete' | 'failed'
 interface Planned { status: PlanStatus; result: PlanResult | null; error: string | null }
 
+interface EditingStep {
+  tcName:       string
+  stepIndex:    number
+  draft:        PlanStep
+}
+
+interface RecrawlModal {
+  open:     boolean
+  tcName:   string
+  url:      string
+  intent:   string
+  headless: boolean
+}
+
 interface Props { onGoToExecution: () => void }
+
+function deriveIntent(steps: PlanStep[]): string {
+  return steps
+    .map(s => s.humanReadable ?? s.action ?? '')
+    .filter(Boolean)
+    .join('; ')
+}
+
+function blankStep(stepNumber: number): PlanStep {
+  return {
+    stepNumber,
+    excelStepRef: 0,
+    pageClass:    '',
+    methodName:   '',
+    hasParameter: false,
+    parameterName: '',
+    parameterType: 'String',
+    isNavigation:  false,
+    humanReadable: '',
+  }
+}
 
 export default function TestDesignTab({ onGoToExecution }: Props) {
   const { C, isDark } = useTheme()
   const appId        = useAppSelector(s => s.app.appId)
+  const appUrl       = useAppSelector(s => s.app.appUrl)
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
 
-  const [step, setStep]                   = useState(1)
+  const [uiStep, setUiStep]               = useState(1)
   const [loadError, setLoadError]         = useState('')
   const [loadingExcel, setLoadingExcel]   = useState(false)
   const [fileList, setFileList]           = useState<UploadFile[]>([])
@@ -61,12 +95,27 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
   const [plannerUsage, setPlannerUsage]   = useState<{ totalCalls: number; totalInputTokens: number; totalOutputTokens: number; totalCostUsd: number } | null>(null)
   const [savedFiles, setSavedFiles]       = useState<{ cls: string; names: string[] }[]>([])
 
-  const [planRun]          = usePlanRunMutation()
-  const [savePlan]         = useSavePlanMutation()
-  const [fetchPlanStatus]  = useLazyGetPlanStatusQuery()
+  // Step edits: user-overridden steps per tc_name
+  const [stepEdits, setStepEdits]         = useState<Record<string, PlanStep[]>>({})
+  // Currently open inline editor
+  const [editingStep, setEditingStep]     = useState<EditingStep | null>(null)
+  // Re-crawl modal state
+  const [recrawlModal, setRecrawlModal]   = useState<RecrawlModal | null>(null)
+  const [recrawling, setRecrawling]       = useState(false)
+
+  const [planRun]         = usePlanRunMutation()
+  const [savePlan]        = useSavePlanMutation()
+  const [fetchPlanStatus] = useLazyGetPlanStatusQuery()
+  const [triggerCrawl]    = useTriggerCrawlMutation()
 
   const selectedTcs   = selectedKeys.map(i => tcs[i]).filter(Boolean)
   const selectedNames = selectedTcs.map(tc => tc.tc_name ?? tc.name ?? '')
+
+  // Returns the effective steps for a tc (user edits if any, else planner result)
+  const effectiveSteps = (tcName: string): PlanStep[] => {
+    if (stepEdits[tcName]) return stepEdits[tcName]
+    return planned[tcName]?.result?.steps ?? planned[tcName]?.result?.plan_steps ?? []
+  }
 
   // ── Step 1 ────────────────────────────────────────────────────────────────
   const doUploadExcel = async (file: File) => {
@@ -87,7 +136,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
     } finally {
       setLoadingExcel(false)
     }
-    return false // prevent antd auto-upload
+    return false
   }
 
   const stepsCols: TableColumnsType<RawTestCaseStep & { _k: number }> = [
@@ -139,25 +188,22 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
     },
   ]
 
-  // ── Step 2 ────────────────────────────────────────────────────────────────
-  const runPlanner = async () => {
+  // ── Step 2 planner ────────────────────────────────────────────────────────
+  const runPlannerForTcs = async (tcsToRun: RawTestCase[]) => {
     setPlanRunning(true)
-    // Clear all selected TCs immediately so stale results don't show
     setPlanned(prev => {
       const next = { ...prev }
-      selectedTcs.forEach(tc => {
+      tcsToRun.forEach(tc => {
         const name = tc.tc_name ?? tc.name ?? ''
         next[name] = { status: 'not_started', result: null, error: null }
       })
       return next
     })
-    for (const tc of selectedTcs) {
+    for (const tc of tcsToRun) {
       const name = tc.tc_name ?? tc.name ?? ''
       setPlanned(prev => ({ ...prev, [name]: { status: 'in_progress', result: null, error: null } }))
       try {
         await planRun({ app_id: appId, tc_name: name, description: tc.description ?? '', java_dir: frameworkDir, steps: tc.steps ?? [] }).unwrap()
-
-        // Wait for PLANNER_RESULT via SSE — use since=now so we don't replay old events
         await new Promise<void>((resolve, reject) => {
           const since = new Date().toISOString()
           const sse = new EventSource(`/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
@@ -179,7 +225,8 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                 eval:          payload.eval as PlanEval | undefined,
               }
               setPlanned(prev => ({ ...prev, [name]: { status: 'complete', result, error: null } }))
-              // Refresh cumulative LLM usage after each plan
+              // Clear any prior edits so the new plan shows fresh
+              setStepEdits(prev => { const next = { ...prev }; delete next[name]; return next })
               if (payload.llm_usage?.totalCalls != null) {
                 setPlannerUsage(payload.llm_usage)
               } else {
@@ -199,6 +246,94 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
     setPlanRunning(false)
   }
 
+  const runPlanner = () => runPlannerForTcs(selectedTcs)
+
+  // ── Step edit handlers ────────────────────────────────────────────────────
+  const startEdit = (tcName: string, stepIndex: number) => {
+    const steps = effectiveSteps(tcName)
+    setEditingStep({ tcName, stepIndex, draft: { ...steps[stepIndex] } })
+  }
+
+  const saveEdit = () => {
+    if (!editingStep) return
+    const { tcName, stepIndex, draft } = editingStep
+    const steps = [...effectiveSteps(tcName)]
+    steps[stepIndex] = draft
+    setStepEdits(prev => ({ ...prev, [tcName]: steps }))
+    setEditingStep(null)
+  }
+
+  const cancelEdit = () => setEditingStep(null)
+
+  const addInteraction = (tcName: string) => {
+    const steps = effectiveSteps(tcName)
+    const newStep = blankStep(steps.length + 1)
+    const updated = [...steps, newStep]
+    setStepEdits(prev => ({ ...prev, [tcName]: updated }))
+    setEditingStep({ tcName, stepIndex: updated.length - 1, draft: { ...newStep } })
+  }
+
+  const deleteStep = (tcName: string, stepIndex: number) => {
+    const steps = effectiveSteps(tcName).filter((_, i) => i !== stepIndex)
+    setStepEdits(prev => ({ ...prev, [tcName]: steps }))
+    if (editingStep?.tcName === tcName && editingStep.stepIndex === stepIndex) setEditingStep(null)
+  }
+
+  // ── Re-crawl ─────────────────────────────────────────────────────────────
+  const openRecrawl = (tcName: string) => {
+    const steps = effectiveSteps(tcName)
+    setRecrawlModal({
+      open:     true,
+      tcName,
+      url:      appUrl,
+      intent:   deriveIntent(steps),
+      headless: true,
+    })
+  }
+
+  const confirmRecrawl = async () => {
+    if (!recrawlModal) return
+    const { tcName, url, intent, headless } = recrawlModal
+    setRecrawling(true)
+    try {
+      await triggerCrawl({
+        app_id: appId, app_url: url,
+        build_id: 'recrawl-' + Date.now(),
+        trigger_type: 'UPDATE',
+        flow_name: intent,
+        headless,
+      }).unwrap()
+
+      // Wait for GENERATOR_COMPLETE then re-run planner
+      await new Promise<void>((resolve) => {
+        const since = new Date().toISOString()
+        const sse = new EventSource(`/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
+        const timer = setTimeout(() => { sse.close(); resolve() }, 300000)
+        sse.onmessage = (ev) => {
+          try {
+            const event = JSON.parse(ev.data)
+            if (event.stage === 'GENERATOR_COMPLETE' || event.stage === 'POM_COMPLETE') {
+              clearTimeout(timer); sse.close(); resolve()
+            }
+          } catch { /* ignore */ }
+        }
+        sse.onerror = () => { clearTimeout(timer); sse.close(); resolve() }
+      })
+
+      setRecrawlModal(null)
+      message.success('Re-crawl complete — re-running planner')
+
+      // Re-run planner for the affected test case
+      const tc = selectedTcs.find(t => (t.tc_name ?? t.name) === tcName)
+      if (tc) await runPlannerForTcs([tc])
+    } catch (e: unknown) {
+      const err = e as Error
+      message.error(`Re-crawl failed: ${err?.message ?? 'Unknown error'}`)
+    } finally {
+      setRecrawling(false)
+    }
+  }
+
   const canSave = selectedNames.length > 0 && selectedNames.every(name => {
     const p = planned[name]
     if (!p || p.status !== 'complete') return false
@@ -206,7 +341,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
     return conf == null || Number(conf) >= 0.75
   })
 
-  // ── Step 3 ────────────────────────────────────────────────────────────────
+  // ── Step 3 save ───────────────────────────────────────────────────────────
   const doSave = async () => {
     setSaveError('')
     const fileMap: Record<string, string[]> = {}
@@ -222,19 +357,85 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
         app_id: appId, java_dir: frameworkDir,
         test_cases: selectedTcs.map(tc => {
           const name = tc.tc_name ?? tc.name ?? ''
-          return { tc_name: name, result: planned[name]?.result ?? null }
+          const result = planned[name]?.result ?? null
+          // Merge user edits into the saved result
+          const mergedResult = result && stepEdits[name]
+            ? { ...result, steps: stepEdits[name] }
+            : result
+          return { tc_name: name, result: mergedResult }
         }),
       }).unwrap()
     } catch (_) {}
-    setStep(3)
+    setUiStep(3)
+  }
+
+  // ── Render inline step row ────────────────────────────────────────────────
+  const renderStepRow = (tcName: string, s: PlanStep, i: number, isLast: boolean) => {
+    const isEditing = editingStep?.tcName === tcName && editingStep.stepIndex === i
+    const desc   = s.humanReadable ?? s.action ?? s.pageClass ?? ''
+    const cls    = s.page_class ?? s.pageClass ?? ''
+    const method = s.method ?? s.methodName ?? ''
+    const rawArgs = Array.isArray(s.params) ? s.params : Array.isArray(s.parameters) ? s.parameters : []
+    const args   = rawArgs.join(', ')
+    const call   = cls && method ? `${cls}.${method}(${args})` : method ? `${method}(${args})` : ''
+
+    if (isEditing && editingStep) {
+      const d = editingStep.draft
+      return (
+        <div key={i} style={{ padding: '8px 0', borderBottom: !isLast ? `1px solid ${C.border}` : 'none' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 6 }}>
+            <Input
+              size="small" placeholder="Description (humanReadable)"
+              value={d.humanReadable ?? ''} style={{ fontSize: 12 }}
+              onChange={e => setEditingStep(prev => prev ? { ...prev, draft: { ...prev.draft, humanReadable: e.target.value } } : null)}
+            />
+            <Input
+              size="small" placeholder="Page class (e.g. LoginPage)"
+              value={d.pageClass ?? ''} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}
+              onChange={e => setEditingStep(prev => prev ? { ...prev, draft: { ...prev.draft, pageClass: e.target.value } } : null)}
+            />
+            <Input
+              size="small" placeholder="Method name (e.g. enterEmail)"
+              value={d.methodName ?? ''} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}
+              onChange={e => setEditingStep(prev => prev ? { ...prev, draft: { ...prev.draft, methodName: e.target.value } } : null)}
+            />
+            <Input
+              size="small" placeholder="Parameter name (leave blank if none)"
+              value={d.parameterName ?? ''} style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11 }}
+              onChange={e => setEditingStep(prev => prev ? { ...prev, draft: { ...prev.draft, parameterName: e.target.value, hasParameter: !!e.target.value } } : null)}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+            <Button size="small" icon={<CheckOutlined />} type="primary" onClick={saveEdit}>Save</Button>
+            <Button size="small" icon={<CloseOutlined />} onClick={cancelEdit}>Cancel</Button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 0', borderBottom: !isLast ? `1px solid ${C.border}` : 'none' }}>
+        <span style={{ minWidth: 22, color: C.muted, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, flexShrink: 0 }}>{i + 1}.</span>
+        <span style={{ flex: 1, fontSize: 13, color: C.text }}>{desc}</span>
+        {call && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.blue, whiteSpace: 'nowrap' }}>[{call}]</span>}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          <Tooltip title="Edit step">
+            <Button size="small" type="text" icon={<EditOutlined style={{ fontSize: 11, color: C.muted }} />} onClick={() => startEdit(tcName, i)} />
+          </Tooltip>
+          <Tooltip title="Delete step">
+            <Button size="small" type="text" icon={<DeleteOutlined style={{ fontSize: 11, color: C.red }} />} onClick={() => deleteStep(tcName, i)} />
+          </Tooltip>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div>
-      <StepIndicator step={step} />
+      <StepIndicator step={uiStep} />
 
       {/* ── Step 1 ── */}
-      {step === 1 && (
+      {uiStep === 1 && (
         <div>
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 20px', marginBottom: 16 }}>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 16 }}>Load Test Cases</div>
@@ -277,7 +478,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                 }}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-                <Button type="primary" disabled={selectedKeys.length === 0} onClick={() => { setPlanned({}); setStep(2) }}>Next →</Button>
+                <Button type="primary" disabled={selectedKeys.length === 0} onClick={() => { setPlanned({}); setUiStep(2) }}>Next →</Button>
               </div>
             </div>
           )}
@@ -285,7 +486,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
       )}
 
       {/* ── Step 2 ── */}
-      {step === 2 && (
+      {uiStep === 2 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 600, color: C.text }}>Plan Test Cases</div>
@@ -308,13 +509,25 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
             const result  = p?.result ?? null
             const conf    = result?.confidence ?? result?.score
             const needsReview = conf != null && Number(conf) < 0.75
-            const steps: PlanStep[] = result?.steps ?? result?.plan_steps ?? []
-            const params = result?.parameters ?? result?.params ?? []
+            const steps   = effectiveSteps(name)
+            const params  = result?.parameters ?? result?.params ?? []
+            const hasEdits = !!stepEdits[name]
+
             return (
               <div key={name} style={{ background: C.surface, border: `1px solid ${needsReview ? C.amber : C.border}`, borderRadius: 8, marginBottom: 14, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px' }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text }}>{name}</span>
-                  <ConfBadge conf={conf} />
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {hasEdits && (
+                      <Tag color="blue" style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10 }}>edited</Tag>
+                    )}
+                    <ConfBadge conf={conf} />
+                    {status === 'complete' && (
+                      <Tooltip title="Re-crawl with edited steps as intent">
+                        <Button size="small" icon={<ReloadOutlined />} onClick={() => openRecrawl(name)}>Re-crawl</Button>
+                      </Tooltip>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontSize: 12, color: C.muted, padding: '0 16px 10px' }}>"{tc.description ?? ''}"</div>
                 <div style={{ borderTop: `1px solid ${C.border}`, padding: '14px 16px' }}>
@@ -349,24 +562,18 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
                                   {g.label}
                                 </div>
                                 <div style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: '0 0 6px 6px', padding: '4px 12px' }}>
-                                  {g.items.map(({ s, i }, gi) => {
-                                    const desc   = s.humanReadable ?? s.action ?? s.pageClass ?? ''
-                                    const cls    = s.page_class ?? s.pageClass ?? ''
-                                    const method = s.method ?? s.methodName ?? ''
-                                    const rawArgs = Array.isArray(s.params) ? s.params : Array.isArray(s.parameters) ? s.parameters : []
-                                    const args   = rawArgs.join(', ')
-                                    const call   = cls && method ? `${cls}.${method}(${args})` : method ? `${method}(${args})` : ''
-                                    return (
-                                      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 0', borderBottom: gi < g.items.length - 1 ? `1px solid ${C.border}` : 'none' }}>
-                                        <span style={{ minWidth: 22, color: C.muted, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, flexShrink: 0 }}>{i + 1}.</span>
-                                        <span style={{ flex: 1, fontSize: 13, color: C.text }}>{desc}</span>
-                                        {call && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: C.blue, whiteSpace: 'nowrap' }}>[{call}]</span>}
-                                      </div>
-                                    )
-                                  })}
+                                  {g.items.map(({ s, i }) => renderStepRow(name, s, i, i === steps.length - 1))}
                                 </div>
                               </div>
                             ))}
+                            {/* Add Interaction button */}
+                            <Button
+                              size="small" type="dashed" icon={<PlusOutlined />}
+                              onClick={() => addInteraction(name)}
+                              style={{ marginTop: 4, width: '100%', color: C.muted, borderColor: C.border }}
+                            >
+                              Add Interaction
+                            </Button>
                           </div>
                         )
                       })()}
@@ -424,7 +631,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
           })}
 
           <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-            <Button onClick={() => setStep(1)}>← Back</Button>
+            <Button onClick={() => setUiStep(1)}>← Back</Button>
             <div style={{ flex: 1 }} />
             <Button type="primary" disabled={!canSave} onClick={doSave} style={{ background: canSave ? C.green : undefined, borderColor: canSave ? C.green : undefined }}>Save →</Button>
           </div>
@@ -432,7 +639,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
       )}
 
       {/* ── Step 3 ── */}
-      {step === 3 && (
+      {uiStep === 3 && (
         <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '16px 20px' }}>
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 16 }}>Save Test Cases</div>
           <div style={{ color: C.muted, fontSize: 13, fontFamily: "'IBM Plex Mono',monospace", marginBottom: 14 }}>
@@ -447,11 +654,55 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
             ))}
           </ul>
           <div style={{ display: 'flex', gap: 10 }}>
-            <Button onClick={() => setStep(2)}>← Back to Plan</Button>
+            <Button onClick={() => setUiStep(2)}>← Back to Plan</Button>
             <div style={{ flex: 1 }} />
             <Button type="primary" onClick={onGoToExecution}>Go to Execution →</Button>
           </div>
         </div>
+      )}
+
+      {/* ── Re-crawl Modal ── */}
+      {recrawlModal && (
+        <Modal
+          open={recrawlModal.open}
+          title={<span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14 }}>Re-crawl with Guided Intent</span>}
+          onCancel={() => setRecrawlModal(null)}
+          footer={[
+            <Button key="cancel" onClick={() => setRecrawlModal(null)}>Cancel</Button>,
+            <Button key="confirm" type="primary" loading={recrawling} icon={<ReloadOutlined />} onClick={confirmRecrawl}>
+              Start Re-crawl
+            </Button>,
+          ]}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>
+            <div>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4, fontFamily: "'IBM Plex Mono',monospace" }}>App URL</div>
+              <Input
+                value={recrawlModal.url}
+                placeholder="https://your-app.example.com"
+                onChange={e => setRecrawlModal(prev => prev ? { ...prev, url: e.target.value } : null)}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: '#666', marginBottom: 4, fontFamily: "'IBM Plex Mono',monospace" }}>
+                Flow Intent <span style={{ fontWeight: 400, color: '#999' }}>(derived from your edited steps — refine as needed)</span>
+              </div>
+              <Input.TextArea
+                rows={4}
+                value={recrawlModal.intent}
+                onChange={e => setRecrawlModal(prev => prev ? { ...prev, intent: e.target.value } : null)}
+                style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12 }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Switch
+                checked={recrawlModal.headless}
+                onChange={v => setRecrawlModal(prev => prev ? { ...prev, headless: v } : null)}
+              />
+              <span style={{ fontSize: 13 }}>Headless mode</span>
+            </div>
+          </div>
+        </Modal>
       )}
 
       <style>{`

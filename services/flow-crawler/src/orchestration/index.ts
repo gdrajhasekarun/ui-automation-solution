@@ -50,6 +50,10 @@ export interface CrawlResult {
 }
 
 export async function runCrawl(config: CrawlerConfig, payload: RequestPayload): Promise<CrawlResult> {
+  // Per-request overrides — payload values take precedence over crawler.config.json
+  if (payload.flow_name) config.flowName = payload.flow_name
+  if (payload.headless  !== undefined) config.headless = payload.headless
+
   const outputDir  = path.resolve(config.outputDir, config.appId)
   const outputFile = path.join(outputDir, 'graph.json')
 

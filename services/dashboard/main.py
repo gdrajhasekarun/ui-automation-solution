@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import CRAWL_URL, EXECUTOR_URL, GENERATOR_URL, PLANNER_URL, PORT
+from config import CRAWL_URL, CRAWL_AI_URL, EXECUTOR_URL, GENERATOR_URL, PLANNER_URL, PORT
 from db import (db_emit_event, db_get, db_insert, db_list, db_list_after_rowid,
                 db_list_since, db_rowid_before_since, db_update)
 from models import (CrawlTriggerBody, EventBody, ExecuteResultsBody,
@@ -127,13 +127,17 @@ async def crawl_trigger(body: CrawlTriggerBody):
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{CRAWL_URL}/trigger", json={
+            payload: dict = {
                 "app_id": body.app_id,
                 "app_url": body.app_url,
                 "build_id": build_id,
                 "trigger_type": body.trigger_type,
                 "framework_dir": body.framework_dir,
-            })
+                "headless": body.headless,
+            }
+            if body.flow_name:
+                payload["flow_name"] = body.flow_name
+            resp = await client.post(f"{CRAWL_AI_URL}/trigger", json=payload)
             data = resp.json()
     except Exception as e:
         db_emit_event(body.app_id, "CRAWL", f"Crawl service unreachable: {e}", "ERROR")

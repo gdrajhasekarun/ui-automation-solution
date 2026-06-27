@@ -10,6 +10,8 @@ export interface CrawlTriggerReq {
   trigger_type:              'INITIAL' | 'UPDATE'
   framework_dir?:            string
   global_filter_threshold?:  number   // 0.0–1.0, fraction of pages an element must appear on to be filtered as global nav
+  flow_name?:                string   // focused flow intent — drives crawler's flowName for re-crawl
+  headless?:                 boolean
 }
 
 export interface LoadExcelReq  { excel_path: string }

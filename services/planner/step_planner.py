@@ -45,8 +45,9 @@ Return ONLY a valid JSON object. No markdown. No explanation. No ```json fences.
 Rules:
 - The application launch is handled automatically by @BeforeMethod — do NOT emit a launch step.
 - The graph is given as a list of edge blocks: [PageA → PageB] with an Intent line, FILL lines, and a CLICK line.
-- Match each test step's intent to the relevant edge block(s) in the graph.
-- For every matched edge block, emit ALL its FILL lines first (each as its own step), then the CLICK line.
+- Emit steps in EXACTLY the order the edge blocks appear in the graph traversal. Do NOT reorder steps to match test step labels.
+- For each edge block, emit ALL its FILL lines first (each as its own step), then the CLICK line. Use excelStepRef to label which test step each block corresponds to.
+- stepNumber must be a monotonically increasing integer starting at 1 across all steps.
 - FILL lines → hasParameter=true, isNavigation=false. parameterName = the field name in camelCase.
 - CLICK lines → hasParameter=false, isNavigation=true.
 - pageClass for each step = the left side of the edge block header (PageA from [PageA → PageB]).
@@ -324,7 +325,10 @@ def _parse_result(state: PlannerState) -> PlannerState:
     try:
         result = json.loads(state["raw_response"])
         steps = result.get("steps", [])
-        valid = [s for s in steps if s.get("methodName") and s.get("pageClass")]
+        valid = sorted(
+            [s for s in steps if s.get("methodName") and s.get("pageClass")],
+            key=lambda s: s.get("stepNumber", 9999)
+        )
         if len(valid) < len(steps):
             logger.warning(f"Dropped {len(steps) - len(valid)} steps missing methodName/pageClass")
             result["steps"] = valid

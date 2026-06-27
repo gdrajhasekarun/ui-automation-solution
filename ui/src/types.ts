@@ -125,7 +125,12 @@ export interface PlanStep {
   parameters?: string[]
   humanReadable?: string
   excelStepRef?: number
-  // LLM may also return camelCase variants
+  stepNumber?: number
+  // LLM camelCase variants
   pageClass?: string
   methodName?: string
+  hasParameter?: boolean
+  parameterName?: string
+  parameterType?: string
+  isNavigation?: boolean
 }

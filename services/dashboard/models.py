@@ -15,6 +15,8 @@ class CrawlTriggerBody(BaseModel):
     build_id: str = ""
     trigger_type: str = "INITIAL"
     framework_dir: str = ""
+    flow_name: str = ""       # focused flow intent — passed to crawler as flowName override
+    headless: bool = True
 
 
 class PlanRunStep(BaseModel):
