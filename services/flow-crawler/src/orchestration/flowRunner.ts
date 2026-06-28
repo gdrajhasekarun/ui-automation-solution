@@ -290,6 +290,59 @@ export async function runFromPage(
         }
       }
 
+      // Step 1b: Radio group auto-fill — group radios by name/radiogroup/parent and dispatch the matching option
+      const radioElements = currentElements.filter(e => e.elementType === 'radio')
+      if (radioElements.length > 0) {
+        // Group radios in the browser by name attr, radiogroup ancestor, or common parent
+        type RadioGroupMap = Record<string, { selector: string; name: string }[]>
+        const radioGroups: RadioGroupMap = await page.evaluate((selectors: string[]) => {
+          const groups: RadioGroupMap = {}
+          selectors.forEach((sel, idx) => {
+            let el: HTMLInputElement | null = null
+            try { el = document.querySelector(sel) as HTMLInputElement | null } catch { /* Playwright-specific selector like :has-text() — skip */ }
+            if (!el) { groups[`__noname_${idx}`] = [{ selector: sel, name: '' }]; return }
+            // Priority 1: name attribute
+            if (el.name) {
+              const key = `name:${el.name}`
+              groups[key] = groups[key] ?? []
+              groups[key].push({ selector: sel, name: el.getAttribute('aria-label') ?? el.value ?? '' })
+              return
+            }
+            // Priority 2+3: [role="radiogroup"] ancestor
+            const rg = el.closest('[role="radiogroup"]') as HTMLElement | null
+            if (rg) {
+              const rgLabel = (rg.getAttribute('aria-label') ?? rg.id ?? '').trim()
+              const key = rgLabel ? `rg:${rgLabel}` : `rg:idx:${Array.from(document.querySelectorAll('[role="radiogroup"]')).indexOf(rg)}`
+              groups[key] = groups[key] ?? []
+              groups[key].push({ selector: sel, name: el.getAttribute('aria-label') ?? el.value ?? '' })
+              return
+            }
+            // Priority 4: common parent DOM index
+            const parent = el.parentElement
+            const parentIdx = parent ? Array.from(document.querySelectorAll('*')).indexOf(parent) : -1
+            const key = `parent:idx:${parentIdx}`
+            groups[key] = groups[key] ?? []
+            groups[key].push({ selector: sel, name: el.getAttribute('aria-label') ?? el.value ?? '' })
+          })
+          return groups
+        }, radioElements.map(e => e._selector!).filter(Boolean)).catch(() => ({} as RadioGroupMap))
+
+        const fieldHints = ctx.notes.fieldHints ?? {}
+        for (const [groupKey, options] of Object.entries(radioGroups)) {
+          if (!options.length) continue
+          // Find matching option from notes hints
+          const hintValues = Object.values(fieldHints).map((v: unknown) => String(v).trim().toLowerCase())
+          const matched = options.find(o => hintValues.includes(o.name.trim().toLowerCase()))
+          const chosen = matched ?? options[0]
+          if (!chosen?.selector) continue
+          // Find the CapturedElement for this option
+          const el = radioElements.find(e => e._selector === chosen.selector) ?? radioElements[0]
+          log.info('INTERACT', `  → radio    group="${groupKey}" option="${chosen.name}"  selector=${chosen.selector}`)
+          await dispatch(page, { ...el, _selector: chosen.selector }, currentElements, [el], library, config.headless, null)
+          await waitForIdle(page)
+        }
+      }
+
       // Step 2: LLM picks ONE navigation/action element — exclude disabled elements
       const disabledSelectors = await page.evaluate(() => {
         return Array.from(document.querySelectorAll('button, [role="button"], a')).flatMap(el => {
@@ -305,6 +358,7 @@ export async function runFromPage(
       const navCandidates = currentElements.filter(e =>
         e.elementType !== 'textbox' && e.elementType !== 'textarea' &&
         e.elementType !== 'select'  && e.elementType !== 'combobox' &&
+        e.elementType !== 'radio'   && e.elementType !== 'checkbox' &&
         !disabledSelectors.includes((e.name ?? '').toLowerCase().slice(0, 60))
       )
       log.info('PICK', `  [iter ${iterations}] Asking LLM to pick next action from ${navCandidates.length} candidates for flow "${config.flowName}"`)
@@ -402,19 +456,21 @@ export async function runFromPage(
           return null
         }).catch(() => null)
 
-        if (resultsMeta && resultsMeta.dataRows > 0) {
+        const resultsNodeIdCheck = resultsMeta ? nodeId(normalizeUrl(page.url()) + '#results') : null
+        if (resultsMeta && resultsMeta.dataRows > 0 && resultsNodeIdCheck && !graph.hasNode(resultsNodeIdCheck)) {
           log.info('PICK', `  Results table detected (${resultsMeta.dataRows} rows, cols: ${resultsMeta.headers.join(', ')}) — capturing elements and continuing`)
 
           const resultsUrl    = page.url()
           const resultsTitle  = await page.title()
           const resultsFp     = `results-${resultsMeta.dataRows}-${resultsMeta.headers.join('|').slice(0, 40)}`
-          const resultsNodeId = nodeId(normalizeUrl(resultsUrl) + '#results')
+          const resultsNodeId = resultsNodeIdCheck
 
           // Capture interactive elements on the results page (pagination, sort, row links, etc.)
           const resultsAllElements = await capturePageElements(page, library)
+          const nonGlobalResultsElements = resultsAllElements.filter(e => !graph.globalElements.has(e.id))
           const filteredResultsElements = ctx.smartLLM
-            ? await filterElements(resultsAllElements, config.flowName!, resultsUrl, resultsTitle, ctx.smartLLM)
-            : resultsAllElements
+            ? await filterElements(nonGlobalResultsElements, config.flowName!, resultsUrl, resultsTitle, ctx.smartLLM)
+            : nonGlobalResultsElements
 
           if (!graph.hasNode(resultsNodeId)) {
             const resultsHeading = await getPageHeading(page)
@@ -448,7 +504,8 @@ export async function runFromPage(
         }
 
         const allCaptured = await capturePageElements(page, library)
-        currentElements = await filterElements(allCaptured, config.flowName!, page.url(), await page.title(), ctx.smartLLM!)
+        const nonGlobalCaptured = allCaptured.filter(e => !graph.globalElements.has(e.id))
+        currentElements = await filterElements(nonGlobalCaptured, config.flowName!, page.url(), await page.title(), ctx.smartLLM!)
         log.info('FILTER', `  Re-capture after content change: ${allCaptured.length} total, ${currentElements.length} after filter`)
         currentElements.forEach((e, i) => {
           log.info('FILTER', `    [${String(i + 1).padStart(3)}] ${e.elementType.padEnd(8)} "${e.name}"  selector=${e._selector}`)

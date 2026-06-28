@@ -56,6 +56,7 @@ Rules:
 - If a dialog/overlay is present (Accept, Continue, Close), always pick that first.
 - Prefer elements whose label directly matches the flow name or a step in it.
 - Do NOT pick an element that was already successfully executed in the completed steps unless the flow explicitly requires repeating it.
+- On a product detail page: if "Add to cart", "Buy", or "Get it now" is present, ALWAYS prefer it over pagination, color/size pickers, or promotional links to advance a purchase flow.
 - Set elementId=null ONLY if absolutely no element in the list has any connection to the flow — this should be extremely rare.
 Also set intentCoverage to an integer 0–100 representing how much of the flow goal has been accomplished based on the completed steps (100 = fully done).
 Return the exact element id from the list above.`

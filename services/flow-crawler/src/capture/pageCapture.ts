@@ -103,12 +103,14 @@ export async function capturePageElements(
         return document.body
       },
 
-      buildSelector(el: HTMLElement, tag: string, ariaLabel: string, href: string, placeholder: string): string {
+      buildSelector(el: HTMLElement, tag: string, ariaLabel: string, href: string, placeholder: string, ariaLabelRaw = ''): string {
         // Skip auto-generated Angular Material / CDK IDs — they change on re-render
+        // Also skip React streaming/fiber IDs (contain «») — invalid CSS and unstable across renders
         const autoGenId = /^(mat-input|mat-select|mat-option|mat-form-field|mat-chip|mat-tab|mat-expansion|mat-radio|mat-checkbox|mat-slide|cdk-)/i
-        const elId = el.id && !/^\d/.test(el.id) && !autoGenId.test(el.id) ? el.id : ''
+        const elId = el.id && !/^\d/.test(el.id) && !autoGenId.test(el.id) && !el.id.includes('«') ? el.id : ''
         if (elId)        return `#${elId}`
-        if (ariaLabel)   return `[aria-label="${ariaLabel.slice(0, 80).replace(/"/g, '\\"')}"]`
+        const selectorAriaLabel = ariaLabelRaw || ariaLabel
+        if (selectorAriaLabel)   return `[aria-label="${selectorAriaLabel.slice(0, 80).replace(/"/g, '\\"')}"]`
         if (href && href !== '#' && !href.startsWith('javascript'))
                          return `a[href="${href.slice(0, 100).replace(/"/g, '\\"')}"]`
         if (placeholder) return `${tag}[placeholder="${placeholder.slice(0, 80).replace(/"/g, '\\"')}"]`
@@ -119,11 +121,21 @@ export async function capturePageElements(
         return `${tag}:has-text("${text}")`
       },
 
-      isVisible(el: HTMLElement): boolean {
+      isVisible(el: HTMLElement, skipSizeCheck = false): boolean {
         const rect  = el.getBoundingClientRect()
         const style = window.getComputedStyle(el)
+        if (style.display === 'none') return false
+        // Radio/checkbox inputs are often CSS-replaced: the real <input> is visually hidden
+        // (opacity:0, position:absolute, etc.) but the parent container IS visible.
+        // In that case, check the parent instead of the input itself.
+        if (skipSizeCheck) {
+          const parent = el.parentElement
+          if (!parent) return false
+          const pr = parent.getBoundingClientRect()
+          const ps = window.getComputedStyle(parent)
+          return pr.width > 0 && pr.height > 0 && ps.display !== 'none' && ps.visibility !== 'hidden' && parseFloat(ps.opacity) > 0
+        }
         if (rect.width === 0 || rect.height === 0)  return false
-        if (style.display     === 'none')            return false
         if (style.visibility  === 'hidden')          return false
         if (parseFloat(style.opacity) === 0)         return false
         return true
@@ -165,11 +177,16 @@ export async function capturePageElements(
             targetEl = anchor
           }
 
-          if (!this.isVisible(targetEl)) continue
+          const elInputType = targetEl.getAttribute('type') ?? ''
+          const elRole = (targetEl.getAttribute('role') ?? '').toLowerCase()
+          const isRadioOrCheckbox = (targetEl.tagName.toLowerCase() === 'input' && (elInputType === 'radio' || elInputType === 'checkbox'))
+            || elRole === 'radio' || elRole === 'checkbox'
+          if (!this.isVisible(targetEl, isRadioOrCheckbox)) continue
 
           const targetTag  = targetEl.tagName.toLowerCase()
           const roleAttr   = (targetEl.getAttribute('role') || '').trim()
-          const ariaRaw    = (targetEl.getAttribute('aria-label') || '').trim()
+          const ariaRawUntrimmed = targetEl.getAttribute('aria-label') || ''
+          const ariaRaw    = ariaRawUntrimmed.trim()
           const ariaLabel  = this.isBoilerplate(ariaRaw) ? '' : ariaRaw
           const titleAttr  = (targetEl.getAttribute('title') || '').trim()
           const inputType  = targetEl.getAttribute('type') || ''
@@ -220,7 +237,7 @@ export async function capturePageElements(
           if (attrHref === '#' && !ariaLabel && !titleAttr) continue
 
           const dedupeKey = `${rawLabel.slice(0, 60)}||${targetTag}`
-          const selector = this.buildSelector(targetEl, targetTag, ariaLabel, attrHref, placeholder)
+          const selector = this.buildSelector(targetEl, targetTag, ariaLabel, attrHref, placeholder, ariaRawUntrimmed)
           const hasId = selector.startsWith('#')
           if (this.seen.has(dedupeKey)) {
             // Replace previous entry only if this element has an ID-based selector and the prior one doesn't
@@ -318,6 +335,7 @@ const GLOBAL_ELEMENT_LABELS = new Set([
   'help', 'contact', 'about', 'sitemap', 'privacy', 'terms',
   'select a language', 'select a language english',
   'click for accessibility menu', 'font decrease', 'font increase',
+  'close drawer', 'close vzgpt drawer', 'open vzgpt', 'vzgpt',
 ])
 
 export function isGlobalElement(el: CapturedElement): boolean {

@@ -20,6 +20,5 @@ export const baseInteractors: LibInteractorMap = {
     },
   },
   checkbox: { async click(page, selector) { await page.click(selector) } },
-  radio:    { async click(page, selector) { await page.click(selector) } },
   button:   { async click(page, selector) { await page.click(selector) } },
 }

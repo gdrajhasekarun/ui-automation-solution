@@ -22,6 +22,11 @@ export async function filterElements(
   )
   const gateIds = new Set(gateElements.map(e => e.id))
 
+  // Always keep radio/checkbox — the radio auto-fill step depends on them being present
+  const alwaysKeepIds = new Set(
+    elements.filter(e => e.elementType === 'radio' || e.elementType === 'checkbox').map(e => e.id)
+  )
+
   const elementSummary = elements.map(e =>
     `id=${e.id} type=${e.elementType} name="${e.name}" label="${e.label ?? ''}" required=${e.required}`
   ).join('\n')
@@ -51,7 +56,7 @@ Return JSON with relevantElementIds array and brief reasoning.`],
     const result = await chain.invoke({ flowName, url, title, elements: elementSummary }) as { relevantElementIds: string[] }
 
     const relevant = new Set(result.relevantElementIds)
-    return elements.filter(e => relevant.has(e.id) || gateIds.has(e.id) || e.blocked)
+    return elements.filter(e => relevant.has(e.id) || gateIds.has(e.id) || alwaysKeepIds.has(e.id) || e.blocked)
   } catch (err: any) {
     log.warn('FILTER', `LLM filter failed: ${err.message}`)
     return elements
