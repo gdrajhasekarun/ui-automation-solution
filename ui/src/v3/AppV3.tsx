@@ -161,7 +161,7 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
 
   function connectSSE(aid: string, mode: 'graph' | 'ai') {
     sseRef.current?.close()
-    const prefix = mode === 'ai' ? '/api/v3/ai' : '/api/v3'
+    const prefix = mode === 'ai' ? '/dashboard/api/v3/ai' : '/dashboard/api/v3'
     const es = new EventSource(`${prefix}/events/${encodeURIComponent(aid)}/stream`)
     es.onmessage = (e) => {
       try {
@@ -718,8 +718,8 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
       // Try AI crawler first (most recent for default crawlerMode=ai),
       // then fall back to graph crawler endpoint which also reads shared/outputs on disk.
       const tryUrls: Array<[string, 'ai' | 'graph']> = [
-        [`/api/v3/ai/graph/${encodeURIComponent(aid.trim())}`, 'ai'],
-        [`/api/v3/graph/${encodeURIComponent(aid.trim())}`,    'graph'],
+        [`/dashboard/api/v3/ai/graph/${encodeURIComponent(aid.trim())}`, 'ai'],
+        [`/dashboard/api/v3/graph/${encodeURIComponent(aid.trim())}`,    'graph'],
       ]
       let found = false
       for (const [url, src] of tryUrls) {

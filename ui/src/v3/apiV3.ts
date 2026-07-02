@@ -123,7 +123,7 @@ export interface V3AiCrawlTriggerReq {
 
 export const apiV3 = createApi({
   reducerPath: 'apiV3',
-  baseQuery: fetchBaseQuery({ baseUrl: '/api/v3' }),
+  baseQuery: fetchBaseQuery({ baseUrl: '/dashboard/api/v3' }),
   tagTypes: ['V3Graph', 'V3Events', 'V3AiGraph', 'V3AiEvents'],
   endpoints: (build) => ({
 

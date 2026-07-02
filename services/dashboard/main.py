@@ -26,6 +26,75 @@ logger = logging.getLogger("dashboard")
 
 _SHARED_DIR = os.environ.get("SHARED_DIR", os.path.join(os.path.dirname(__file__), "../../shared"))
 
+CATALOG_URL        = os.environ.get("CATALOG_URL", "http://localhost:8761")
+CATALOG_HEARTBEAT  = int(os.environ.get("CATALOG_HEARTBEAT_INTERVAL", "20"))
+
+
+class _CatalogRegistration:
+    """Registers this service with the CaaS catalog and keeps the lease alive."""
+
+    def __init__(self, catalog_url: str, name: str, host: str, port: int, health_path: str):
+        self._url        = catalog_url.rstrip("/")
+        self._body       = {"name": name, "host": host, "port": port,
+                            "healthUrl": f"http://{host}:{port}{health_path}", "metadata": {}}
+        self._instance_id: str | None = None
+        self._task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        await self._register()
+        self._task = asyncio.create_task(self._heartbeat_loop())
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+        await self._deregister()
+
+    async def _register(self) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(f"{self._url}/register", json=self._body)
+                r.raise_for_status()
+                self._instance_id = r.json()["id"]
+                logger.info("Registered with catalog as instance %s", self._instance_id)
+        except Exception as exc:
+            logger.warning("Could not register with catalog: %s — will retry on next heartbeat", exc)
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await asyncio.sleep(CATALOG_HEARTBEAT)
+            if self._instance_id is None:
+                await self._register()
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=5) as c:
+                    r = await c.put(f"{self._url}/heartbeat/{self._instance_id}")
+                    if r.status_code == 404:
+                        self._instance_id = None
+            except Exception as exc:
+                logger.warning("Heartbeat failed: %s — will re-register on next tick", exc)
+                self._instance_id = None
+
+    async def _deregister(self) -> None:
+        if not self._instance_id:
+            return
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                await c.delete(f"{self._url}/deregister/{self._instance_id}")
+                logger.info("Deregistered instance %s from catalog", self._instance_id)
+        except Exception as exc:
+            logger.warning("Deregister failed: %s — catalog lease TTL will evict the instance", exc)
+        finally:
+            self._instance_id = None
+
+
+_catalog = _CatalogRegistration(
+    catalog_url=CATALOG_URL,
+    name="dashboard",
+    host="localhost",
+    port=PORT,
+    health_path="/health",
+)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -34,8 +103,10 @@ async def lifespan(_app: FastAPI):
     logger.info("Deployment type: ALWAYS-ON")
     logger.info("Web UI: http://localhost:8000")
     logger.info("=" * 50)
+    await _catalog.start()
     yield
     logger.info("Dashboard shutting down")
+    await _catalog.stop()
 
 
 app = FastAPI(
