@@ -124,7 +124,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
     try {
       const form = new FormData()
       form.append('file', file)
-      const resp = await fetch('/api/plan/upload-excel', { method: 'POST', body: form })
+      const resp = await fetch('/dashboard/api/plan/upload-excel', { method: 'POST', body: form })
       const data = await resp.json()
       if (data.status === 'ERROR') throw new Error(data.detail ?? 'Failed to load')
       setTcs(data.test_cases ?? [])
@@ -206,7 +206,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
         await planRun({ app_id: appId, tc_name: name, description: tc.description ?? '', java_dir: frameworkDir, steps: tc.steps ?? [] }).unwrap()
         await new Promise<void>((resolve, reject) => {
           const since = new Date().toISOString()
-          const sse = new EventSource(`/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
+          const sse = new EventSource(`/dashboard/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
           const timer = setTimeout(() => { sse.close(); reject(new Error('Timed out waiting for planner result')) }, 120000)
           sse.onmessage = (ev) => {
             try {
@@ -230,7 +230,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
               if (payload.llm_usage?.totalCalls != null) {
                 setPlannerUsage(payload.llm_usage)
               } else {
-                fetch(`/api/plan/usage/${encodeURIComponent(appId)}`)
+                fetch(`/dashboard/api/plan/usage/${encodeURIComponent(appId)}`)
                   .then(r => r.json()).then(u => setPlannerUsage(u)).catch(() => {})
               }
               resolve()
@@ -307,7 +307,7 @@ export default function TestDesignTab({ onGoToExecution }: Props) {
       // Wait for GENERATOR_COMPLETE then re-run planner
       await new Promise<void>((resolve) => {
         const since = new Date().toISOString()
-        const sse = new EventSource(`/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
+        const sse = new EventSource(`/dashboard/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`)
         const timer = setTimeout(() => { sse.close(); resolve() }, 300000)
         sse.onmessage = (ev) => {
           try {

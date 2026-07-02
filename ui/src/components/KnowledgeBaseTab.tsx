@@ -251,7 +251,7 @@ export default function KnowledgeBaseTab() {
   // Open SSE connection after trigger
   const openStream = (since: string) => {
     esRef.current?.close()
-    const url = `/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`
+    const url = `/dashboard/api/events/${encodeURIComponent(appId)}/stream?since=${encodeURIComponent(since)}`
     const es = new EventSource(url)
     esRef.current = es
     es.onmessage = (e) => {

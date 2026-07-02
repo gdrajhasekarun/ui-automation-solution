@@ -55,7 +55,7 @@ export interface RunsResp {
 
 export const api = createApi({
   reducerPath: 'api',
-  baseQuery: fetchBaseQuery({ baseUrl: '/api' }),
+  baseQuery: fetchBaseQuery({ baseUrl: '/dashboard/api' }),
   tagTypes: ['TestCases', 'Events', 'Runs'],
   endpoints: (build) => ({
 
