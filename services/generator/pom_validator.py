@@ -1,3 +1,4 @@
+import os
 import re
 import logging
 from pathlib import Path
@@ -134,3 +135,83 @@ def validate_all(written: list[dict]) -> dict[str, list[str]]:
         else:
             logger.debug(f"Validated OK: {Path(path).name}")
     return failures
+
+
+# ── Broken test reference scanner ─────────────────────────────────────────────
+
+_PUBLIC_METHOD_RE = re.compile(r'public\s+\S+\s+(\w+)\s*\(')
+
+
+def _collect_method_names(pom_dir: str, ext: str = ".java") -> set[str]:
+    """Extract all public method names from *Page files in pom_dir."""
+    names: set[str] = set()
+    for fname in os.listdir(pom_dir):
+        if not fname.endswith(ext) or "GlobalTabs" in fname or "BasePage" in fname:
+            continue
+        try:
+            text = Path(os.path.join(pom_dir, fname)).read_text()
+            for m in _PUBLIC_METHOD_RE.finditer(text):
+                name = m.group(1)
+                if name not in ("constructor",):
+                    names.add(name)
+        except OSError:
+            pass
+    return names
+
+
+def _closest_match(name: str, candidates: set[str]) -> str | None:
+    """Return the candidate with the most shared leading characters, or None."""
+    best, best_score = None, 0
+    for c in candidates:
+        score = 0
+        for a, b in zip(name, c):
+            if a == b:
+                score += 1
+            else:
+                break
+        if score > best_score:
+            best_score, best = score, c
+    return best if best_score >= 4 else None
+
+
+def scan_broken_test_references(
+    pom_dir: str,
+    old_methods: set[str],
+    new_methods: set[str],
+    test_root: str,
+) -> list[dict]:
+    """Scan test source files for calls to methods that were removed.
+
+    Returns a list of dicts: {testFile, line, removedMethod, suggestion}.
+    """
+    removed = old_methods - new_methods
+    if not removed:
+        return []
+
+    results: list[dict] = []
+    test_path = Path(test_root)
+    if not test_path.is_dir():
+        return []
+
+    # Build regex to match any removed method name as a method call
+    pattern = re.compile(r'\.(' + '|'.join(re.escape(m) for m in removed) + r')\s*\(')
+
+    for java_file in test_path.rglob("*.java"):
+        try:
+            lines = java_file.read_text().splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, 1):
+            for m in pattern.finditer(line):
+                removed_name = m.group(1)
+                suggestion = _closest_match(removed_name, new_methods)
+                results.append({
+                    "testFile": str(java_file),
+                    "line": lineno,
+                    "removedMethod": removed_name,
+                    "suggestion": suggestion,
+                })
+
+    if results:
+        logger.warning(f"Found {len(results)} broken test reference(s) after regeneration")
+    return results

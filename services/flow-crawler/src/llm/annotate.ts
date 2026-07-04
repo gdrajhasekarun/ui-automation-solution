@@ -10,10 +10,11 @@ import * as fs from 'fs'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 import type { CrawlerGraph } from '../graph/index.js'
-import { deriveClassName } from '../graph/index.js'
 import type { Graph, CrawlerConfig } from '../types.js'
 import { AnnotationBatchSchema } from '../types.js'
 import { log } from '../logger.js'
+import { nameElements } from './nameElements.js'
+import { nameNodes } from './nameNodes.js'
 
 const BATCH_SIZE = 2
 const MAX_ELEMENTS_PER_NODE = 12
@@ -104,6 +105,8 @@ export async function annotateGraph(
 
   if (toAnnotate.length === 0) {
     log.info('ANNOTATE', 'All nodes reused from previous graph — no LLM calls needed')
+    await nameNodes(graph, fastLLM)
+    await nameElements(graph, fastLLM)
     graph.setAnnotatedAt(new Date().toISOString())
     return
   }
@@ -366,14 +369,13 @@ CRITICAL — return JSON matching EXACTLY this structure (elements nested inside
     }
   }
 
-  // Derive className deterministically from pageRef — no LLM call needed
-  const finalNodes = graph.toJSON().nodes
-  for (const [id, node] of Object.entries(finalNodes)) {
-    const pageRef = node.pageRef ?? node.title ?? ''
-    graph.updateNode(id, { className: deriveClassName(pageRef) })
-  }
-
   await annotateEdges(graph, fastLLM, graphSnapshot)
+
+  // Assign className to every node using spec.intent (cached by nodeId)
+  await nameNodes(graph, fastLLM)
+
+  // Assign uniqueName to every element (deterministic + LLM for collisions only)
+  await nameElements(graph, fastLLM)
 
   graph.setAnnotatedAt(new Date().toISOString())
 }

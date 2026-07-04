@@ -107,8 +107,17 @@ export async function capturePageElements(
         // Skip auto-generated Angular Material / CDK IDs — they change on re-render
         // Also skip React streaming/fiber IDs (contain «») — invalid CSS and unstable across renders
         const autoGenId = /^(mat-input|mat-select|mat-option|mat-form-field|mat-chip|mat-tab|mat-expansion|mat-radio|mat-checkbox|mat-slide|cdk-)/i
+        // Dynamic-suffix IDs: Drupal-style "edit-submit--RandomChars" where the suffix
+        // after '--' is a random string (base64url chars, length 6+).
+        // Always include the tag so the selector is unambiguous when multiple elements
+        // share the same id prefix (e.g. <button id="edit-submit--abc"> vs <input id="edit-submit--2">).
+        const dynamicSuffix = /^(.+?)--[A-Za-z0-9_-]{6,}$/
         const elId = el.id && !/^\d/.test(el.id) && !autoGenId.test(el.id) && !el.id.includes('«') ? el.id : ''
-        if (elId)        return `#${elId}`
+        if (elId) {
+          const dynMatch = elId.match(dynamicSuffix)
+          if (dynMatch) return `${tag}[id^="${dynMatch[1]}"]`
+          return `#${elId}`
+        }
         const selectorAriaLabel = ariaLabelRaw || ariaLabel
         if (selectorAriaLabel)   return `[aria-label="${selectorAriaLabel.slice(0, 80).replace(/"/g, '\\"')}"]`
         if (href && href !== '#' && !href.startsWith('javascript'))

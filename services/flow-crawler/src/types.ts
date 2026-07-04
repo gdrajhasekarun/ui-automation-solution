@@ -72,6 +72,7 @@ export const CapturedElementSchema = z.object({
   href:             z.string().nullable().optional(),
   inputType:        z.string().nullable().optional(),
   spec:             SpecSchema.optional(),
+  uniqueName:       z.string().optional(),
   // Internal — not serialised to graph
   _selector:        z.string().optional(),
   _resolvedValue:   z.string().nullable().optional(),
