@@ -67,6 +67,22 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Generator V2 :8002",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["main:app", "--port", "8002", "--reload"],
+      "cwd": "${workspaceFolder}/services/generator_v2",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SHARED_DIR": "${workspaceFolder}/shared",
+        "DASHBOARD_URL": "http://localhost:8000"
+      },
+      "jinja": true,
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Planner :8003",
       "type": "debugpy",
       "request": "launch",
@@ -174,9 +190,10 @@
       "configurations": [
         "Dashboard :8000",
         // "Crawl ai :8001",
-        "Generator :8002",
+        // "Generator :8002",
+        "Generator V2 :8002",
         // "App Graph Crawler :8005",
-        "crawl - ai :8006"
+        "flow-crawler :8006"
 
         // "Planner :8003",
         // "Executor :8004"

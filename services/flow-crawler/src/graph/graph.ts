@@ -328,14 +328,38 @@ export class CrawlerGraph {
 
     if (globalIds.size === 0) return
 
-    // Populate registry and split per-node elements
+    // Build uniqueName → canonical globalId map so that duplicate captures of the
+    // same logical element (same uniqueName, different id) are also treated as global.
+    // This prevents method-name override conflicts in the generated page classes.
+    const globalNameToId = new Map<string, string>()
+    outer: for (const node of allNodes) {
+      for (const el of [...(node.elements ?? []), ...(node.ownElements ?? [])]) {
+        if (globalIds.has(el.id) && el.uniqueName && !globalNameToId.has(el.uniqueName)) {
+          globalNameToId.set(el.uniqueName, el.id)
+          if (globalNameToId.size === globalIds.size) break outer
+        }
+      }
+    }
+
+    // Populate registry and split per-node elements.
+    // Merge node.elements and node.ownElements so seeded nodes (which may only
+    // have ownElements populated, not elements) are also correctly split.
     for (const node of allNodes) {
+      const allNodeEls: CapturedElement[] = []
+      const deduped = new Set<string>()
+      for (const el of [...(node.elements ?? []), ...(node.ownElements ?? [])]) {
+        if (!deduped.has(el.id)) { deduped.add(el.id); allNodeEls.push(el) }
+      }
+
       const ownElements: CapturedElement[]   = []
       const inheritedIds: string[] = []
-      for (const el of node.elements ?? []) {
-        if (globalIds.has(el.id)) {
-          inheritedIds.push(el.id)
-          if (!this.globalElements.has(el.id)) this.globalElements.set(el.id, el)
+      for (const el of allNodeEls) {
+        const canonicalId = globalIds.has(el.id)
+          ? el.id
+          : (el.uniqueName ? globalNameToId.get(el.uniqueName) : undefined)
+        if (canonicalId) {
+          if (!inheritedIds.includes(canonicalId)) inheritedIds.push(canonicalId)
+          if (!this.globalElements.has(canonicalId)) this.globalElements.set(canonicalId, el)
         } else {
           ownElements.push(el)
         }

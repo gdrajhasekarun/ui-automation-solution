@@ -117,6 +117,27 @@ export interface PlanResult {
   eval?: PlanEval
 }
 
+export interface ExecutorTestResult {
+  method: string
+  status: string
+  duration_ms: number
+  error?: string
+}
+
+export interface ExecutorRunResult {
+  run_id: string
+  app_id: string
+  started_at: string
+  finished_at: string
+  exit_code: number
+  tests: ExecutorTestResult[]
+}
+
+export interface ImportDataResp {
+  imported: Record<string, number>
+  testng_xml: string
+}
+
 export interface PlanStep {
   page_class?: string
   method?: string

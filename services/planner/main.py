@@ -15,7 +15,7 @@ from excel_reader import load_test_cases
 from plan_eval import eval_plan
 from step_planner import plan, _build_registry_index, _build_pageref_class_map
 from story_parser import parse_story
-from test_generator import generate
+from test_generator import generate, _tc_name_to_method
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("planner-service")
@@ -97,6 +97,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             acc["totalCostUsd"] = round(acc["totalCostUsd"] + usage.get("costUsd", 0.0), 6)
             acc["calls"].append({**usage, "tcName": tc_name, "ts": int(time.time())})
 
+        method_name = result.get("testMethodName") or _tc_name_to_method(tc_name)
         _jobs[job_id].update({
             "status": "done",
             "tc_name": tc_name,
@@ -106,7 +107,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             "parameters": result.get("parameters", []),
             "steps": result.get("steps", []),
             "class_name": result.get("startingClass", ""),
-            "method_name": result.get("testMethodName", ""),
+            "method_name": method_name,
             "eval": result.get("eval", {}),
         })
 
@@ -117,7 +118,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
             "parameters": result.get("parameters", []),
             "steps": result.get("steps", []),
             "review_reason": result.get("review_reason", ""),
-            "method_name": result.get("testMethodName", ""),
+            "method_name": method_name,
             "class_name": result.get("startingClass", "").replace("Page","") + "Tests",
             "llm_usage": _app_llm_usage.get(app_id, {}),
             "eval": result.get("eval", {})
@@ -181,7 +182,9 @@ async def plan_save(body: dict):
                 if steps:
                     result["startingClass"] = steps[0].get("pageClass", "")
             try:
-                file_path = generate(result, app_id, java_dir, description, tc_name)
+                file_path, gen_method = generate(result, app_id, java_dir, description, tc_name)
+                if gen_method:
+                    result["testMethodName"] = gen_method
             except Exception as e:
                 logger.error(f"generate() failed for {tc_name}: {e}")
         saved.append({

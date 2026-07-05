@@ -23,16 +23,15 @@ Return ONLY a valid JSON object. No markdown. No explanation. No ```json fences.
       "pageClass": "LoginPage",
       "methodName": "enterEmail",
       "hasParameter": true,
-      "parameterName": "email",
+      "parameterName": "enterEmail",
       "parameterType": "String",
       "isNavigation": false,
       "humanReadable": "Enter email address in the email field"
     }
   ],
   "parameters": [
-    { "name": "email", "type": "String" },
-    { "name": "password", "type": "String" },
-    { "name": "expectedTitle", "type": "String" }
+    { "name": "enterEmail", "type": "String" },
+    { "name": "enterPassword", "type": "String" }
   ],
   "finalAssertion": {
     "methodName": "assertTitle",
@@ -48,7 +47,9 @@ Rules:
 - Emit steps in EXACTLY the order the edge blocks appear in the graph traversal. Do NOT reorder steps to match test step labels.
 - For each edge block, emit ALL its FILL lines first (each as its own step), then the CLICK line. Use excelStepRef to label which test step each block corresponds to.
 - stepNumber must be a monotonically increasing integer starting at 1 across all steps.
-- FILL lines → hasParameter=true, isNavigation=false. parameterName = the field name in camelCase.
+- FILL lines → hasParameter=true, isNavigation=false. parameterName MUST equal the methodName exactly (e.g., methodName "enterEmail" → parameterName "enterEmail").
+- finalAssertion.parameterName MUST equal finalAssertion.methodName exactly.
+- Each entry in parameters[] must have name = the parameterName of the step that uses it, in the order steps appear.
 - CLICK lines → hasParameter=false, isNavigation=true.
 - pageClass for each step = the left side of the edge block header (PageA from [PageA → PageB]).
 - Only use methodNames that appear exactly in the FILL/CLICK lines of the graph. Never invent method names.

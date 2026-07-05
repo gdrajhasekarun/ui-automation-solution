@@ -432,6 +432,65 @@ async def execute_results(body: ExecuteResultsBody):
     return {"status": "ok", "passed": passed, "failed": failed}
 
 
+@app.post("/api/execute/export-template")
+async def execute_export_template(body: dict):
+    """Proxy: build Excel template for selected test methods."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{EXECUTOR_URL}/execute/export-template", json=body)
+        return StreamingResponse(
+            iter([resp.content]),
+            media_type=resp.headers.get("content-type", "application/octet-stream"),
+            headers={"Content-Disposition": resp.headers.get("content-disposition", "attachment")},
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.post("/api/execute/import-data")
+async def execute_import_data(app_id: str, file: UploadFile = File(...), java_dir: str | None = None):
+    """Proxy: forward uploaded Excel, write testdata JSON + regenerate testng.xml."""
+    try:
+        contents = await file.read()
+        params: dict = {"app_id": app_id}
+        if java_dir:
+            params["java_dir"] = java_dir
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{EXECUTOR_URL}/execute/import-data",
+                params=params,
+                files={"file": (file.filename, contents, file.content_type)},
+            )
+        return resp.json()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
+@app.post("/api/execute/run-suite")
+async def execute_run_suite(body: dict):
+    """Proxy: stream SSE from the executor's run-suite endpoint."""
+    async def _stream():
+        async with httpx.AsyncClient(timeout=600) as client:
+            async with client.stream("POST", f"{EXECUTOR_URL}/execute/run-suite", json=body) as resp:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@app.get("/api/execute/executor-results")
+async def execute_executor_results(app_id: str, limit: int = 20):
+    """Proxy: list past execution results from shared outputs."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{EXECUTOR_URL}/execute/results",
+                params={"app_id": app_id, "limit": limit},
+            )
+        return resp.json()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+
 @app.get("/api/test-cases/{app_id}")
 def get_test_cases(app_id: str):
     records = _load_tc_json(app_id)

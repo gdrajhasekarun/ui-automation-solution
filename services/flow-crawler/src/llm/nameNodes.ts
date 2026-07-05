@@ -121,6 +121,42 @@ export async function nameNodes(
     log.info('NAME_NODES', `  ${nodeId} → ${className}`)
   }
 
+  // ── Collision deduplication pass ──────────────────────────────────────────
+  // After all nodes have a name (cache hit or new), ensure every className is
+  // unique within this graph. Duplicate names get a numeric suffix:
+  //   SearchPage, Search2Page, Search3Page …
+  // The deduped names are written back to both the graph and the cache so they
+  // survive re-crawls without re-deriving the suffix.
+  const allAssignments: Array<{ nodeId: string; className: string }> = []
+  for (const [nodeId] of Object.entries(graphData.nodes)) {
+    const cn = cache[nodeId]
+    if (cn) allAssignments.push({ nodeId, className: cn })
+  }
+
+  const nameCount = new Map<string, number>()
+  for (const { className } of allAssignments) {
+    nameCount.set(className, (nameCount.get(className) ?? 0) + 1)
+  }
+
+  const usedCount = new Map<string, number>()
+  for (const { nodeId, className } of allAssignments) {
+    let finalName = className
+    if (nameCount.get(className)! > 1) {
+      const n = (usedCount.get(className) ?? 0) + 1
+      usedCount.set(className, n)
+      if (n > 1) {
+        const base = className.replace(/Page$/, '')
+        finalName = `${base}${n}Page`
+      }
+    }
+    if (cache[nodeId] !== finalName) {
+      cache[nodeId] = finalName
+      cacheUpdated = true
+      graph.updateNode(nodeId, { className: finalName })
+      log.info('NAME_NODES', `  deduped ${nodeId} → ${finalName}`)
+    }
+  }
+
   if (cacheUpdated) {
     saveCache(cachePath, cache)
     log.info('NAME_NODES', `Cache updated → ${cachePath}`)

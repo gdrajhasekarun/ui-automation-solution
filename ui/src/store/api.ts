@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
-import type { TestCase, TestResult, TestRun, UiEvent, Parameter } from '../types'
+import type { TestCase, TestResult, TestRun, UiEvent, Parameter, ExecutorRunResult, ImportDataResp } from '../types'
 
 // ── Request / response shapes ─────────────────────────────────────────────────
 
@@ -49,6 +49,11 @@ export interface RunResultsResp {
 
 export interface RunsResp {
   runs?: TestRun[]
+}
+
+export interface ExportTemplateReq {
+  app_id: string
+  method_names: string[]
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -134,6 +139,34 @@ export const api = createApi({
       providesTags: ['Runs'],
     }),
 
+    exportTemplate: build.mutation<Blob, ExportTemplateReq>({
+      query: (body) => ({
+        url: '/execute/export-template',
+        method: 'POST',
+        body,
+        responseHandler: (response: Response) => response.blob(),
+      }),
+    }),
+
+    importTestData: build.mutation<ImportDataResp, { appId: string; file: File; javaDir?: string }>({
+      query: ({ appId, file, javaDir }) => {
+        const fd = new FormData()
+        fd.append('file', file)
+        const params = new URLSearchParams({ app_id: appId })
+        if (javaDir) params.append('java_dir', javaDir)
+        return { url: `/execute/import-data?${params}`, method: 'POST', body: fd }
+      },
+    }),
+
+    getExecutorResults: build.query<ExecutorRunResult[], { appId: string; limit?: number }>({
+      query: ({ appId, limit = 20 }) =>
+        `/execute/executor-results?app_id=${encodeURIComponent(appId)}&limit=${limit}`,
+      transformResponse: (raw: unknown) =>
+        (raw as { results?: ExecutorRunResult[] }).results ?? [],
+      providesTags: ['Runs'],
+      keepUnusedDataFor: 0,
+    }),
+
   }),
 })
 
@@ -151,4 +184,7 @@ export const {
   useGetRunResultsQuery,
   useGetRunsQuery,
   useLazyGetPlanStatusQuery,
+  useExportTemplateMutation,
+  useImportTestDataMutation,
+  useGetExecutorResultsQuery,
 } = api

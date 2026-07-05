@@ -13,7 +13,7 @@ FILE_HEADER = """package tests.generated;
 import org.testng.annotations.*;
 import pages.*;
 import base.BasePage;
-import utils.ExcelReader;
+import utils.JsonDataProvider;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
 import io.github.bonigarcia.wdm.WebDriverManager;
@@ -42,14 +42,10 @@ public class {class_name} {{
         if (driver != null) driver.quit();
     }}
 
-    @DataProvider(name = "excelData")
-    public static Object[][] getData(Method m) {{
-        return ExcelReader.getRowsByHeader(m.getName());
-    }}
 """
 
 SETUP_MARKER = "@BeforeMethod"
-DATA_PROVIDER_MARKER = "@DataProvider(name = \"excelData\")"
+DATA_PROVIDER_MARKER = "@DataProvider(name = \"jsonData\")"
 
 
 def _tc_name_to_method(tc_name: str) -> str:
@@ -145,7 +141,7 @@ def _build_method(planner_output: dict, description: str, method_name: str) -> s
 
     return (
         f"\n"
-        f"    @Test(dataProvider = \"excelData\",\n"
+        f"    @Test(dataProvider = \"jsonData\", dataProviderClass = JsonDataProvider.class,\n"
         f"          description = \"{description}\")\n"
         f"{low_conf_comment}"
         f"    public void {method_name}({param_decl}) {{\n"
@@ -155,7 +151,7 @@ def _build_method(planner_output: dict, description: str, method_name: str) -> s
     )
 
 
-def generate(planner_output: dict, app_id: str, java_dir: str, description: str = "", tc_name: str = "") -> str:
+def generate(planner_output: dict, app_id: str, java_dir: str, description: str = "", tc_name: str = "") -> tuple[str, str]:
     starting_class = planner_output.get("startingClass", "Generated")
     class_name = starting_class.replace("Page", "") + "Tests" if starting_class else "GeneratedTests"
 
@@ -187,4 +183,4 @@ def generate(planner_output: dict, app_id: str, java_dir: str, description: str 
             f.write(content)
         logger.info(f"Created {class_name}.java")
 
-    return file_path
+    return file_path, method_name

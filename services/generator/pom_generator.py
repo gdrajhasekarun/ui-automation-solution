@@ -1,46 +1,96 @@
+"""
+POM Generator v2 — multi-tool support.
+
+Supported target_tool values:
+  selenium-java      → Java classes (Selenium WebDriver)  [default]
+  selenium-csharp    → C# classes  (Selenium WebDriver)
+  selenium-python    → Python classes (Selenium WebDriver)
+  playwright-js      → JavaScript classes (Playwright)
+  playwright-ts      → TypeScript classes (Playwright)
+  playwright-python  → Python classes (Playwright)
+  cypress-js         → JavaScript classes (Cypress)
+  cypress-ts         → TypeScript classes (Cypress)
+"""
+
 import json
+import logging
 import os
 import re
-import logging
 
-from pom_validator import validate_all
+from pom_validator import validate_all, scan_broken_test_references, _collect_method_names
 
-logger = logging.getLogger("generator.pom_gen")
+logger = logging.getLogger("generator.pom_gen_v2")
 
-HEADER = "// AUTO-GENERATED — DO NOT EDIT\n// Regenerate via POST /trigger\n\n"
+HEADER = "// AUTO-GENERATED — DO NOT EDIT\n// Regenerate via POST /v2/trigger\n\n"
+HEADER_PY = "# AUTO-GENERATED — DO NOT EDIT\n# Regenerate via POST /v2/trigger\n\n"
 
+
+# ── Name registry — persists constName/methodName across runs ─────────────────
+
+def _load_name_registry(path: str) -> dict:
+    """Load {selectorKey: {constName, methodName}} from disk, or return empty dict."""
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_name_registry(path: str, registry: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(registry, f, indent=2)
+
+
+def _pick_method_name(prefix: str, label: str, sk: str, elem: dict,
+                      name_registry: dict, seen_methods: dict,
+                      computed_base: str | None = None) -> str:
+    """Return the stored method name for sk if available, otherwise compute and store a new one.
+
+    Pass computed_base to override _method_name() — used by Python generators that produce
+    snake_case names via _snake().
+    """
+    stored = name_registry.get(sk, {}).get("methodName")
+    if stored:
+        seen_methods[stored] = seen_methods.get(stored, 0) + 1
+        return stored
+    base = computed_base if computed_base is not None else _method_name(prefix, label, sk, elem)
+    # Preserve separator style: snake_case uses "_N", camelCase uses "N"
+    sep = "_" if "_" in base else ""
+    if base not in seen_methods:
+        name = base
+    else:
+        count = seen_methods[base] + 1
+        while f"{base}{sep}{count}" in seen_methods:
+            count += 1
+        name = f"{base}{sep}{count}"
+    seen_methods[name] = 1
+    name_registry.setdefault(sk, {})["methodName"] = name
+    return name
+
+# ── Shared helpers (copied from pom_generator.py) ────────────────────────────
 
 def _pascal(s: str) -> str:
-    return "".join(w.capitalize() for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
+    return "".join(w[0].upper() + w[1:] for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
 
 
 _GENERIC_LABELS = {"input", "button", "element", "text", "select", "checkbox", "radio", "a", "link", ""}
-
-# ID/selector strings that look like internal system fields rather than semantic names
 _INTERNAL_ID_RE = re.compile(r'[0-9a-f]{8}|FormSession|FormItem|PageItem|NavigationButton|__VIEWSTATE', re.IGNORECASE)
 
 
 def _ascii_ratio(s: str) -> float:
-    """Fraction of printable characters that are ASCII letters/digits."""
     printable = [c for c in s if not c.isspace()]
     if not printable:
         return 1.0
-    ascii_chars = [c for c in printable if ord(c) < 128 and (c.isalnum() or c in "-_")]
-    return len(ascii_chars) / len(printable)
+    return len([c for c in printable if ord(c) < 128 and (c.isalnum() or c in "-_")]) / len(printable)
 
 
 def _semantic_words(label: str, el: dict | None = None, selector_key: str = "") -> list[str]:
-    """
-    Return the most semantic word list for naming a constant or method.
-    Priority: label → primary attribute value → selectorKey.
-    Falls back gracefully when any source looks like an internal ID or multi-language text.
-    """
     def clean(s: str) -> list[str]:
         return [w for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w]
 
     label_words = clean(label)
-    # Reject label if: empty, generic, internal ID, mostly non-ASCII (multi-language text),
-    # or excessively long (scraped block text / concatenated option list)
     label_usable = (
         label_words
         and label.lower() not in _GENERIC_LABELS
@@ -51,7 +101,6 @@ def _semantic_words(label: str, el: dict | None = None, selector_key: str = "") 
     if label_usable:
         return label_words[:6]
 
-    # Try the primary attribute value (e.g. name="dd-country" → ["dd", "country"])
     if el:
         primary = el.get("primary") or {}
         ptype = primary.get("type", "")
@@ -60,110 +109,230 @@ def _semantic_words(label: str, el: dict | None = None, selector_key: str = "") 
             words = clean(pval)
             if words:
                 return words[:6]
-        # Try id only if it's a short human-readable slug (not a GUID)
         if ptype == "id" and pval and not _INTERNAL_ID_RE.search(pval) and len(pval) < 40:
             words = clean(pval)
             if words:
                 return words[:6]
 
-    # Last resort: selectorKey
     sk_words = clean(selector_key)
     return sk_words[:6] if sk_words else ["Element"]
 
 
+_ELEM_TYPE_CONST_SUFFIX: dict[str, str] = {
+    "textbox":   "_TEXT_BOX",
+    "textarea":  "_TEXT_BOX",
+    "search":    "_TEXT_BOX",
+    "button":    "_BUTTON",
+    "submit":    "_BUTTON",
+    "select":    "_SELECT",
+    "combobox":  "_SELECT",
+    "checkbox":  "_CHECK_BOX",
+    "radio":     "_RADIO_BUTTON",
+    "link":      "_LINK",
+}
+_ELEM_TYPE_METHOD_SUFFIX: dict[str, str] = {
+    "textbox":   "TextBox",
+    "textarea":  "TextBox",
+    "search":    "TextBox",
+    "button":    "Button",
+    "submit":    "Button",
+    "select":    "Select",
+    "combobox":  "Select",
+    "checkbox":  "CheckBox",
+    "radio":     "RadioButton",
+    "link":      "Link",
+}
+
+
+def _elem_label(el: dict | None, selector_key: str = "") -> str:
+    """Return the best label for an element — uniqueName first, then name/label, then selector."""
+    if el:
+        if el.get("uniqueName"):
+            return el["uniqueName"].strip()
+        raw = (el.get("label") or el.get("name") or "").strip()
+        if raw:
+            logger.debug("Generator: element missing uniqueName, falling back to name/label for sk=%s", selector_key)
+            return raw
+    return selector_key
+
+
 def _method_name(prefix: str, label: str, selector_key: str = "", el: dict | None = None) -> str:
+    # If el has uniqueName, the label already contains the type suffix word — use it directly
+    # No action prefix added: the type suffix (TextBox/Button/Select) already conveys the action,
+    # and adding a prefix causes double-action names like "selectTypeOfInformationSelect".
+    if el and el.get("uniqueName"):
+        words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
+        alpha_words = [w for w in words if w and not w.isdigit()]
+        # Only strip numeric tokens if at least one alpha word remains
+        words = alpha_words if alpha_words else words
+        if words:
+            return words[0].lower() + "".join(w.capitalize() for w in words[1:])
     words = _semantic_words(label, el, selector_key)
+    etype = (el.get("elementType") or "") if el else ""
+    method_sfx = _ELEM_TYPE_METHOD_SUFFIX.get(etype, "")
     camel = words[0].lower() + "".join(w.capitalize() for w in words[1:])
-    return prefix + camel[0].upper() + camel[1:]
+    base = prefix + camel[0].upper() + camel[1:]
+    return base + method_sfx if method_sfx and not base.endswith(method_sfx) else base
 
 
 def _const_name(label: str, el: dict | None = None, selector_key: str = "") -> str:
-    """SCREAMING_SNAKE_CASE constant name — uses the most semantic source available."""
-    words = _semantic_words(label, el, selector_key)
-    name = "_".join(w.upper() for w in words)
-    # Java identifiers cannot start with a digit
+    # If el has uniqueName, the label already includes type — parse it directly
+    if el and el.get("uniqueName"):
+        words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
+        alpha_words = [w for w in words if w and not w.isdigit()]
+        words = alpha_words if alpha_words else [w for w in words if w]
+        name = "_".join(w.upper() for w in words) if words else "ELEMENT"
+    else:
+        words = _semantic_words(label, el, selector_key)
+        etype = (el.get("elementType") or "") if el else ""
+        const_sfx = _ELEM_TYPE_CONST_SUFFIX.get(etype, "")
+        name = "_".join(w.upper() for w in words)
+        if const_sfx and not name.endswith(const_sfx.lstrip("_")):
+            name = name + const_sfx
     if name and name[0].isdigit():
         name = "EL_" + name
     return name
 
 
 def _sanitise_xpath(xpath: str) -> str:
-    """
-    Rewrite an XPath that matches on exact multi-line or non-ASCII text content
-    into a robust contains()-based expression using only the first ASCII fragment.
-    e.g. //a[normalize-space()="Language Assistance:\n  Español\n..."]
-      →  //a[contains(normalize-space(), "Language Assistance")]
-    """
-    # Detect: normalize-space() = "..." where the string is long / contains newlines / non-ASCII
     m = re.search(r'normalize-space\(\)\s*=\s*["\']([^"\']+)["\']', xpath)
     if m:
         raw_text = m.group(1)
-        has_newline = "\n" in raw_text or "\r" in raw_text or "\xa0" in raw_text
-        has_non_ascii = any(ord(c) > 127 for c in raw_text)
-        if has_newline or has_non_ascii or len(raw_text) > 60:
-            # Extract only the first ASCII clause (up to first non-ASCII char or newline/pipe)
+        if "\n" in raw_text or "\r" in raw_text or "\xa0" in raw_text or any(ord(c) > 127 for c in raw_text) or len(raw_text) > 60:
             first_clause = re.split(r'[\n\r\xa0|]', raw_text)[0].strip()
-            # Keep only printable ASCII
             first_clause = re.sub(r'[^\x20-\x7E]', '', first_clause).strip()
             if first_clause:
-                rewritten = re.sub(
+                return re.sub(
                     r'normalize-space\(\)\s*=\s*["\'][^"\']+["\']',
                     f'contains(normalize-space(), "{first_clause}")',
                     xpath,
                 )
-                return rewritten
     return xpath
 
 
 def _parse_locator(selector_key: str) -> tuple[str, str]:
-    """
-    Convert a selectorKey string to (type, value) for Locator construction.
-      #id            → ("id", "id-value")
-      [name="x"]     → ("name", "x")
-      [data-testid=] → ("css", full-selector)
-      xpath=...      → ("xpath", xpath-expression)
-      anything else  → ("css", selector)
-    """
     sk = selector_key.strip()
     if sk.startswith("xpath="):
         return "xpath", _sanitise_xpath(sk[6:])
     if sk.startswith("#") and " " not in sk:
         return "id", sk[1:]
-    # [name="value"] — extract the value so By.name() is used
     m = re.match(r'^\[name=["\']?([^"\'>\]]+)["\']?\]$', sk)
     if m:
         return "name", m.group(1)
+    # Playwright-only :has-text() → XPath (not valid in Selenium CSS)
+    # e.g. button:has-text("Search fees") → //button[normalize-space(.)='Search fees']
+    ht = re.match(r'^([a-zA-Z*][a-zA-Z0-9]*)?:has-text\(["\'](.+?)["\']\)$', sk)
+    if ht:
+        tag  = ht.group(1) or "*"
+        text = ht.group(2).replace("'", "\\'")
+        return "xpath", f"//{tag}[normalize-space(.)='{text}']"
     return "css", sk
 
 
-def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> str:
-    # Build node_id → class_name map from the dict-keyed nodes
-    node_class_map: dict[str, str] = {
-        nid: _class_name_from_node(n)
-        for nid, n in graph.get("nodes", {}).items()
-    }
+def _class_name_from_node(node: dict) -> str:
+    # Prefer LLM-assigned className from the crawler annotation pass
+    if node.get("className"):
+        cn = node["className"]
+        return cn if cn.endswith("Page") else cn + "Page"
+    _SKIP_TITLES = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
+    node_name = (node.get("nodeName") or "").strip()
+    if node_name and node_name.lower() not in _SKIP_TITLES and len(node_name) <= 80:
+        return _pascal(node_name) + "Page"
+    heading = (node.get("heading") or "").strip()
+    if heading and heading.lower() not in _SKIP_TITLES and len(heading) <= 80:
+        return _pascal(heading) + "Page"
+    title = (node.get("title") or "").strip()
+    if title.lower() not in _SKIP_TITLES:
+        return _pascal(title) + "Page"
+    from urllib.parse import urlparse
+    url = node.get("url", "")
+    parsed = urlparse(url)
+    ignore = {"en-us", "en-US", "common", "members", "pages", "aspx", ""}
+    parts = [p.rsplit(".", 1)[0] for p in parsed.path.strip("/").split("/")
+             if p and p.lower() not in ignore]
+    label = " ".join(parts[-2:]) if parts else (parsed.hostname or "Unknown").split(".")[0]
+    return _pascal(label) + "Page" if label else "UnknownPage"
 
-    # crawl-ai edges use "from"/"to" (not "fromNodeId"/"toNodeId")
-    edges_from = [e for e in graph.get("edges", []) if e.get("from") == node_id]
-    # Key by elementId so lookup works regardless of selector format
+
+# ── Per-tool output directory helper ─────────────────────────────────────────
+
+def output_subdir(target_tool: str) -> str:
+    if target_tool == "selenium-java":
+        return os.path.join("src", "main", "java", "pages")
+    if target_tool == "selenium-csharp":
+        return os.path.join("src", "Pages")
+    if target_tool in ("selenium-python", "playwright-python"):
+        return "pages"
+    if target_tool in ("cypress-js", "cypress-ts"):
+        return os.path.join("cypress", "pages")
+    # playwright-js / playwright-ts
+    return os.path.join("src", "pages")
+
+
+def file_extension(target_tool: str) -> str:
+    if target_tool == "selenium-java":
+        return ".java"
+    if target_tool == "selenium-csharp":
+        return ".cs"
+    if target_tool in ("selenium-python", "playwright-python"):
+        return ".py"
+    if target_tool in ("playwright-js", "cypress-js"):
+        return ".js"
+    return ".ts"
+
+
+# ── Element extraction helper ─────────────────────────────────────────────────
+
+def _extract_elements(node: dict, node_id: str, graph: dict, name_registry: dict | None = None,
+                      node_class_override: dict[str, str] | None = None):
+    """Return (elem_consts, edge_targets) for a node.
+
+    elem_consts: list of (const_name, loc_type, loc_val, elem)
+    edge_targets: dict of elementId → (target_class_name, is_self)
+    name_registry: if provided, stored constNames are reused and new ones are written back.
+    node_class_override: pre-resolved {node_id: class_name} map; when provided, used instead of
+        re-deriving class names — ensures cross-file references use final collision-resolved names.
+    """
+    if name_registry is None:
+        name_registry = {}
+    raw_nodes = graph.get("nodes", {})
+
+    if node_class_override is not None:
+        node_class_map = node_class_override
+    else:
+        def _node_class(n: dict) -> str:
+            return _class_name_from_node(n)
+        if isinstance(raw_nodes, list):
+            node_class_map: dict[str, str] = {
+                n.get("nodeId", str(i)): _node_class(n)
+                for i, n in enumerate(raw_nodes)
+            }
+        else:
+            node_class_map = {
+                nid: _node_class(n)
+                for nid, n in raw_nodes.items()
+            }
+
+    # edges support both raw (from/to) and normalized (fromNodeId/toNodeId) formats
+    edges_from = [
+        e for e in graph.get("edges", [])
+        if (e.get("from") or e.get("fromNodeId")) == node_id
+    ]
+    # Key by elementId (present on every trigger) so lookup works regardless of selector format
     edge_targets: dict[str, tuple[str, bool]] = {}
     for e in edges_from:
         elem_id = e.get("trigger", {}).get("elementId") or e.get("elementId") or ""
         if not elem_id:
             continue
-        to_nid = e.get("to", "")
-        target_class = node_class_map.get(to_nid, "UnknownPage")
-        edge_targets[elem_id] = (target_class, to_nid == node_id)
+        to_nid = e.get("to") or e.get("toNodeId") or ""
+        edge_targets[elem_id] = (node_class_map.get(to_nid, "UnknownPage"), to_nid == node_id)
 
     elements = node.get("elements", [])
-    assertable = node.get("assertableElements", [])
-
-    # ── Deduplicate elements by selectorKey (edge triggers take priority) ────
     trigger_ids: set[str] = {e.get("trigger", {}).get("elementId", "") for e in edges_from}
     seen_sk: dict[str, int] = {}  # sk → index in unique_elements
     unique_elements: list[dict] = []
     for elem in elements:
-        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
         if not sk:
             continue
         elem_id = elem.get("id", "")
@@ -174,26 +343,46 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
             seen_sk[sk] = len(unique_elements)
             unique_elements.append(elem)
 
-    # ── Build constant name → (type, value, element) map ────────────────────
-    # Guard against duplicate constant names (two elements with same label)
     seen_const: set[str] = set()
-    elem_consts: list[tuple[str, str, str, dict]] = []  # (const_name, loc_type, loc_val, elem)
+    # Pre-seed seen_const with stored constNames so new elements don't collide
     for elem in unique_elements:
-        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-        label = (elem.get("label") or elem.get("name") or "").strip()
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        stored_cname = name_registry.get(sk, {}).get("constName")
+        if stored_cname:
+            seen_const.add(stored_cname)
+
+    elem_consts: list[tuple[str, str, str, dict]] = []
+    for elem in unique_elements:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
         loc_type, loc_val = _parse_locator(sk)
-        cname = _const_name(label, el=elem, selector_key=sk)
-        # Resolve collision by appending an incrementing counter
-        if cname in seen_const:
-            base, counter = cname, 2
-            while f"{base}_{counter}" in seen_const:
-                counter += 1
-            cname = f"{base}_{counter}"
-        seen_const.add(cname)
+        # Reuse stored constName if available
+        stored_cname = name_registry.get(sk, {}).get("constName")
+        if stored_cname:
+            cname = stored_cname
+        else:
+            cname = _const_name(label, el=elem, selector_key=sk)
+            if cname in seen_const:
+                base, counter = cname, 2
+                while f"{base}_{counter}" in seen_const:
+                    counter += 1
+                cname = f"{base}_{counter}"
+            seen_const.add(cname)
+            name_registry.setdefault(sk, {})["constName"] = cname
         elem_consts.append((cname, loc_type, loc_val, elem))
 
-    # ── Locator constants ────────────────────────────────────────────────────
-    # Escape backslashes and double-quotes in loc_val for Java string literals
+    return elem_consts, edge_targets
+
+
+# ── Selenium Java ─────────────────────────────────────────────────────────────
+
+def _generate_java(node: dict, node_id: str, graph: dict, class_name: str,
+                   node_class_override: dict | None = None,
+                   name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
     def _java_str(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -201,33 +390,20 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
         f'    private static final Locator {cname} = new Locator("{loc_type}", "{_java_str(loc_val)}");'
         for cname, loc_type, loc_val, _ in elem_consts
     ]
-    constants_block = "\n".join(constants_lines)
 
-    # ── Constructor asserts ──────────────────────────────────────────────────
-    assert_consts = []
-    for cname, _, _, elem in elem_consts:
-        elem_sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-        if elem_sk in assertable:
-            assert_consts.append(cname)
+    assertable = node.get("assertableElements", [])
     constructor_asserts = "\n".join(
-        f"        assertVisible({c});" for c in assert_consts[:3]
-    )
+        f"        assertVisible({cname});"
+        for cname, _, _, elem in elem_consts
+        if elem.get("selectorKey") in assertable
+    )[:3 * 40]  # max 3
 
-    # ── Methods ──────────────────────────────────────────────────────────────
     methods: list[str] = []
-    seen_methods: dict[str, int] = {}  # method_name → usage count for dedup
-
-    def _unique_method(base_name: str) -> str:
-        if base_name not in seen_methods:
-            seen_methods[base_name] = 1
-            return base_name
-        count = seen_methods[base_name] + 1
-        seen_methods[base_name] = count
-        return f"{base_name}{count}"
+    seen_methods: dict[str, int] = {}
 
     for cname, _, _, elem in elem_consts:
-        sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-        label = (elem.get("label") or elem.get("name") or "").strip()
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
         elem_id = elem.get("id", "")
         elem_type = elem.get("elementType", "")
         action = "fill" if elem_type in ("textbox", "textarea") else \
@@ -237,7 +413,7 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
             target_class, is_self = edge_targets[elem_id]
             ret_type = class_name if is_self else target_class
             ret_expr = "this" if is_self else f"new {target_class}(driver)"
-            mname = _unique_method(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {ret_type} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -245,7 +421,7 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
                 f"    }}"
             )
         elif action == "fill":
-            mname = _unique_method(_method_name("enter", label, sk, elem))
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        fill({cname}, value);\n"
@@ -253,7 +429,7 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
                 f"    }}"
             )
         elif action == "select":
-            mname = _unique_method(_method_name("select", label, sk, elem))
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}(String value) {{\n"
                 f"        select({cname}, value);\n"
@@ -261,7 +437,7 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
                 f"    }}"
             )
         else:
-            mname = _unique_method(_method_name("click", label, sk, elem))
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
             methods.append(
                 f"    public {class_name} {mname}() {{\n"
                 f"        click({cname});\n"
@@ -269,105 +445,1203 @@ def _generate_class(node: dict, node_id: str, graph: dict, class_name: str) -> s
                 f"    }}"
             )
 
-    methods_str = "\n\n".join(methods)
     return (
         HEADER +
         f"package pages;\n\n"
-        f"import base.BasePage;\n"
+        f"import global.GlobalElement;\n"
         f"import base.Locator;\n"
         f"import org.openqa.selenium.WebDriver;\n\n"
-        f"public class {class_name} extends BasePage {{\n\n"
-        f"{constants_block}\n\n"
+        f"public class {class_name} extends GlobalElement {{\n\n"
+        + "\n".join(constants_lines) + "\n\n"
         f"    public {class_name}(WebDriver driver) {{\n"
         f"        super(driver);\n"
         f"{constructor_asserts}\n"
         f"    }}\n\n"
-        f"{methods_str}\n}}\n"
+        + "\n\n".join(methods) + "\n}\n"
     )
 
 
-_SKIP_TITLES = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
+# ── Selenium C# ───────────────────────────────────────────────────────────────
+
+def _cs_by(loc_type: str, loc_val: str) -> str:
+    def _cs_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    if loc_type == "id":
+        return f'By.Id("{_cs_str(loc_val)}")'
+    if loc_type == "name":
+        return f'By.Name("{_cs_str(loc_val)}")'
+    if loc_type == "xpath":
+        return f'By.XPath("{_cs_str(loc_val)}")'
+    return f'By.CssSelector("{_cs_str(loc_val)}")'
 
 
-_MAX_CLASS_NAME = 80  # keeps file names well under the 255-byte OS limit
+def _generate_csharp(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    constants_lines = [
+        f"        private static readonly By {cname} = {_cs_by(loc_type, loc_val)};"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    def _pascal_method(prefix: str, label: str, sk: str, elem: dict) -> str:
+        words = _semantic_words(label, elem, sk)
+        return prefix + "".join(w.capitalize() for w in words)
+
+    def _pick_cs(prefix: str, label: str, sk: str, elem: dict) -> str:
+        return _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods)
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_type = class_name if is_self else target_class
+            ret_expr = "this" if is_self else f"new {target_class}(driver)"
+            mname = _pick_cs("Click", label, sk, elem)
+            methods.append(
+                f"        public {ret_type} {mname}()\n"
+                f"        {{\n"
+                f"            Click({cname});\n"
+                f"            return {ret_expr};\n"
+                f"        }}"
+            )
+        elif action == "fill":
+            mname = _pick_cs("Enter", label, sk, elem)
+            methods.append(
+                f"        public {class_name} {mname}(string value)\n"
+                f"        {{\n"
+                f"            Fill({cname}, value);\n"
+                f"            return this;\n"
+                f"        }}"
+            )
+        elif action == "select":
+            mname = _pick_cs("Select", label, sk, elem)
+            methods.append(
+                f"        public {class_name} {mname}(string value)\n"
+                f"        {{\n"
+                f"            Select({cname}, value);\n"
+                f"            return this;\n"
+                f"        }}"
+            )
+        else:
+            mname = _pick_cs("Click", label, sk, elem)
+            methods.append(
+                f"        public {class_name} {mname}()\n"
+                f"        {{\n"
+                f"            Click({cname});\n"
+                f"            return this;\n"
+                f"        }}"
+            )
+
+    return (
+        HEADER +
+        f"using OpenQA.Selenium;\n"
+        f"using Base;\n\n"
+        f"namespace Pages\n{{\n"
+        f"    public class {class_name} : GlobalElement\n"
+        f"    {{\n"
+        + "\n".join(constants_lines) + "\n\n"
+        f"        public {class_name}(IWebDriver driver) : base(driver) {{ }}\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"    }}\n}}\n"
+    )
 
 
-def _safe_class_name(name: str) -> str:
-    """Truncate a PascalCase class name so it (+ '.java') fits within OS file-name limits."""
-    if not name.endswith("Page"):
-        name = name + "Page"
-    if len(name) > _MAX_CLASS_NAME:
-        # Trim the base part and re-attach the 'Page' suffix
-        name = name[:_MAX_CLASS_NAME - 4] + "Page"
-    return name
+# ── Playwright locator helper ─────────────────────────────────────────────────
+
+def _pw_locator(loc_type: str, loc_val: str) -> str:
+    def _js_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    if loc_type == "id":
+        return f"'#{_js_str(loc_val)}'"
+    if loc_type == "name":
+        return f"'[name=\"{_js_str(loc_val)}\"]'"
+    if loc_type == "xpath":
+        return f"'xpath={_js_str(loc_val)}'"
+    return f"'{_js_str(loc_val)}'"
 
 
-def _class_name_from_node(node: dict) -> str:
-    # Prefer LLM-assigned className from the crawler annotation pass
-    if node.get("className"):
-        return _safe_class_name(node["className"])
-    # pageRef is the crawler-assigned semantic name — use it first
-    page_ref = (node.get("pageRef") or "").strip()
-    if page_ref and page_ref.lower() not in _SKIP_TITLES:
-        return _safe_class_name(_pascal(page_ref))
-    # nodeName is pre-derived by the crawler (heading > stripped title > url path)
-    node_name = (node.get("nodeName") or "").strip()
-    if node_name and node_name.lower() not in _SKIP_TITLES and len(node_name) <= 80:
-        return _safe_class_name(_pascal(node_name))
-    # Fallbacks for older graph files without nodeName
-    heading = (node.get("heading") or "").strip()
-    if heading and heading.lower() not in _SKIP_TITLES and len(heading) <= 80:
-        return _safe_class_name(_pascal(heading))
-    title = (node.get("title") or "").strip()
-    if title and title.lower() not in _SKIP_TITLES:
-        return _safe_class_name(_pascal(title))
-    from urllib.parse import urlparse
-    url = node.get("url", "")
-    parsed = urlparse(url)
-    ignore = {"en-us", "en-US", "common", "members", "pages", "aspx", ""}
-    parts = [p.rsplit(".", 1)[0] for p in parsed.path.strip("/").split("/")
-             if p and p.lower() not in ignore]
-    label = " ".join(parts[-2:]) if parts else (parsed.hostname or "Unknown").split(".")[0]
-    return _safe_class_name(_pascal(label)) if label else "UnknownPage"
+# ── Playwright JS ─────────────────────────────────────────────────────────────
+
+def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    field_name = lambda cname: cname.lower().replace("_", "")
+
+    constructor_lines = [
+        f"        this.{field_name(cname)} = page.locator({_pw_locator(loc_type, loc_val)});"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+        fname = field_name(cname)
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "this" if is_self else f"new {target_class}(this.page)"
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}() {{\n"
+                f"        await this.{fname}.click();\n"
+                f"        return {ret_expr};\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(value) {{\n"
+                f"        await this.{fname}.fill(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(value) {{\n"
+                f"        await this.{fname}.selectOption(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}() {{\n"
+                f"        await this.{fname}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalElement" if has_base else ""
+    base_import = "const { GlobalElement } = require('../global/GlobalElement');\n" if has_base else ""
+    super_call = "        super(page);\n" if has_base else ""
+    return (
+        HEADER +
+        base_import +
+        f"class {class_name}{base_clause} {{\n"
+        f"    constructor(page) {{\n"
+        f"{super_call}"
+        + "\n".join(constructor_lines) + "\n"
+        f"    }}\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n\n"
+        f"module.exports = {{ {class_name} }};\n"
+    )
 
 
-def generate_all(graph_path: str, output_dir: str) -> dict:
+# ── Playwright TypeScript ─────────────────────────────────────────────────────
+
+def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    field_name = lambda cname: cname.lower().replace("_", "")
+
+    # collect unique target classes for imports
+    imported_classes: set[str] = set()
+    for sk in [elem.get("selectorKey", "") for _, _, _, elem in elem_consts]:
+        if sk in edge_targets:
+            target_class, is_self = edge_targets[sk]
+            if not is_self:
+                imported_classes.add(target_class)
+
+    field_declarations = [
+        f"    readonly {field_name(cname)}: Locator;"
+        for cname, _, _, _ in elem_consts
+    ]
+
+    constructor_lines = [
+        f"        this.{field_name(cname)} = page.locator({_pw_locator(loc_type, loc_val)});"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+        fname = field_name(cname)
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_type = class_name if is_self else target_class
+            ret_expr = "this" if is_self else f"new {target_class}(this.page)"
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(): Promise<{ret_type}> {{\n"
+                f"        await this.{fname}.click();\n"
+                f"        return {ret_expr};\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(value: string): Promise<this> {{\n"
+                f"        await this.{fname}.fill(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(value: string): Promise<this> {{\n"
+                f"        await this.{fname}.selectOption(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    async {mname}(): Promise<this> {{\n"
+                f"        await this.{fname}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalElement" if has_base else ""
+    base_import = "import { GlobalElement } from '../global/GlobalElement';\n" if has_base else ""
+    super_call = "        super(page);\n" if has_base else "        this.page = page;\n"
+    page_field = "" if has_base else "    readonly page: Page;\n"
+
+    import_lines = "import { Page, Locator } from '@playwright/test';\n"
+    if base_import:
+        import_lines += base_import
+    for cls in sorted(imported_classes):
+        import_lines += f"import {{ {cls} }} from './{cls}';\n"
+
+    return (
+        HEADER +
+        import_lines + "\n"
+        f"export class {class_name}{base_clause} {{\n"
+        + page_field
+        + "\n".join(field_declarations) + "\n\n"
+        f"    constructor(page: Page) {{\n"
+        + super_call
+        + "\n".join(constructor_lines) + "\n"
+        f"    }}\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n"
+    )
+
+
+# ── Selenium Python ───────────────────────────────────────────────────────────
+
+def _py_locator(loc_type: str, loc_val: str) -> str:
+    def _py_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    if loc_type == "id":
+        return f'By.ID, "{_py_str(loc_val)}"'
+    if loc_type == "name":
+        return f'By.NAME, "{_py_str(loc_val)}"'
+    if loc_type == "xpath":
+        return f'By.XPATH, "{_py_str(loc_val)}"'
+    return f'By.CSS_SELECTOR, "{_py_str(loc_val)}"'
+
+
+def _snake(label: str, el: dict | None = None, selector_key: str = "") -> str:
+    words = _semantic_words(label, el, selector_key)
+    return "_".join(w.lower() for w in words)
+
+
+def _generate_selenium_python(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    locator_lines = [
+        f'    {cname} = ({_py_locator(loc_type, loc_val)})'
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_class = class_name if is_self else target_class
+            ret_expr = "self" if is_self else f"{ret_class}(self.driver)"
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.driver.find_element(*self.{cname}).click()\n"
+                f"        return {ret_expr}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.driver.find_element(*self.{cname}).clear()\n"
+                f"        self.driver.find_element(*self.{cname}).send_keys(value)\n"
+                f"        return self"
+            )
+        elif action == "select":
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        from selenium.webdriver.support.ui import Select\n"
+                f"        Select(self.driver.find_element(*self.{cname})).select_by_visible_text(value)\n"
+                f"        return self"
+            )
+        else:
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.driver.find_element(*self.{cname}).click()\n"
+                f"        return self"
+            )
+
+    return (
+        HEADER_PY +
+        "from selenium.webdriver.common.by import By\n\n\n"
+        f"class {class_name}:\n"
+        + "\n".join(locator_lines) + "\n\n"
+        f"    def __init__(self, driver):\n"
+        f"        self.driver = driver\n\n"
+        + "\n\n".join(methods) + "\n"
+    )
+
+
+# ── Playwright Python ─────────────────────────────────────────────────────────
+
+def _pw_py_locator(loc_type: str, loc_val: str) -> str:
+    def _py_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+    if loc_type == "id":
+        return f'"#{_py_str(loc_val)}"'
+    if loc_type == "name":
+        return f'"[name=\\"{_py_str(loc_val)}\\"]"'
+    if loc_type == "xpath":
+        return f'"xpath={_py_str(loc_val)}"'
+    return f'"{_py_str(loc_val)}"'
+
+
+def _generate_playwright_python(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    field_name = lambda cname: cname.lower().replace("_", "")
+
+    constructor_lines = [
+        f"        self.{field_name(cname)} = page.locator({_pw_py_locator(loc_type, loc_val)})"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+        fname = field_name(cname)
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "self" if is_self else f"{target_class}(self.page)"
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.{fname}.click()\n"
+                f"        return {ret_expr}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.{fname}.fill(value)\n"
+                f"        return self"
+            )
+        elif action == "select":
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self, value: str):\n"
+                f"        self.{fname}.select_option(value)\n"
+                f"        return self"
+            )
+        else:
+            mname = _pick_method_name("", "", sk, elem, name_registry, seen_methods, computed_base=_snake(label, elem, sk))
+            methods.append(
+                f"    def {mname}(self):\n"
+                f"        self.{fname}.click()\n"
+                f"        return self"
+            )
+
+    has_base = bool(graph.get("globalElements"))
+    base_import = "from global.global_element import GlobalElement\n" if has_base else ""
+    base_clause = "(GlobalElement)" if has_base else ""
+    super_call = "        super().__init__(page)\n" if has_base else "        self.page = page\n"
+
+    return (
+        HEADER_PY +
+        "from playwright.sync_api import Page, Locator\n"
+        + base_import + "\n\n"
+        f"class {class_name}{base_clause}:\n"
+        f"    def __init__(self, page: Page):\n"
+        + super_call
+        + "\n".join(constructor_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+    )
+
+
+# ── Cypress JS ────────────────────────────────────────────────────────────────
+
+def _cy_locator(loc_type: str, loc_val: str) -> str:
+    def _js_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace("'", "\\'")
+    if loc_type == "id":
+        return f"'#{_js_str(loc_val)}'"
+    if loc_type == "name":
+        return f"'[name=\"{_js_str(loc_val)}\"]'"
+    if loc_type == "xpath":
+        return f"'{_js_str(loc_val)}', {{ xpath: true }}"
+    return f"'{_js_str(loc_val)}'"
+
+
+def _generate_cypress_js(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    getter_lines = [
+        f"    get {cname.lower()}() {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+        getter = cname.lower()
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_expr = "this" if is_self else f"new {target_class}()"
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}() {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return {ret_expr};\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(value) {{\n"
+                f"        this.{getter}.clear().type(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(value) {{\n"
+                f"        this.{getter}.select(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}() {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalElement" if has_base else ""
+    base_import = "const { GlobalElement } = require('../global/GlobalElement');\n" if has_base else ""
+    return (
+        HEADER +
+        base_import +
+        f"class {class_name}{base_clause} {{\n"
+        + "\n".join(getter_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n\n"
+        f"module.exports = {{ {class_name} }};\n"
+    )
+
+
+# ── Cypress TypeScript ────────────────────────────────────────────────────────
+
+def _generate_cypress_ts(node: dict, node_id: str, graph: dict, class_name: str,
+                     node_class_override: dict | None = None,
+                     name_registry: dict | None = None) -> str:
+    if name_registry is None:
+        name_registry = {}
+    elem_consts, edge_targets = _extract_elements(node, node_id, graph, name_registry, node_class_override=node_class_override)
+
+    getter_lines = [
+        f"    get {cname.lower()}(): Cypress.Chainable {{ return cy.get({_cy_locator(loc_type, loc_val)}); }}"
+        for cname, loc_type, loc_val, _ in elem_consts
+    ]
+
+    methods: list[str] = []
+    seen_methods: dict[str, int] = {}
+
+    for cname, _, _, elem in elem_consts:
+        sk = elem.get("selectorKey") or elem.get("_selector") or ""
+        label = _elem_label(elem, sk)
+        elem_id = elem.get("id", "")
+        elem_type = elem.get("elementType", "")
+        action = "fill" if elem_type in ("textbox", "textarea") else \
+                 "select" if elem_type in ("select", "combobox") else "click"
+        getter = cname.lower()
+
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            ret_type = class_name if is_self else target_class
+            ret_expr = "this" if is_self else f"new {target_class}()"
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(): {ret_type} {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return {ret_expr};\n"
+                f"    }}"
+            )
+        elif action == "fill":
+            mname = _pick_method_name("enter", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(value: string): this {{\n"
+                f"        this.{getter}.clear().type(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        elif action == "select":
+            mname = _pick_method_name("select", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(value: string): this {{\n"
+                f"        this.{getter}.select(value);\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+        else:
+            mname = _pick_method_name("click", label, sk, elem, name_registry, seen_methods)
+            methods.append(
+                f"    {mname}(): this {{\n"
+                f"        this.{getter}.click();\n"
+                f"        return this;\n"
+                f"    }}"
+            )
+
+    has_base = bool(graph.get("globalElements"))
+    base_clause = " extends GlobalElement" if has_base else ""
+    base_import = "import { GlobalElement } from '../global/GlobalElement';\n" if has_base else ""
+    return (
+        HEADER +
+        base_import +
+        f"export class {class_name}{base_clause} {{\n"
+        + "\n".join(getter_lines) + "\n\n"
+        + "\n\n".join(methods) + "\n"
+        f"}}\n"
+    )
+
+
+# ── Reconciliation helpers ────────────────────────────────────────────────────
+
+def _find_existing_file_for_node(output_dir: str, ext: str, elem_consts: list) -> str | None:
+    """Return path of an existing file that already covers ≥50% of the node's locator values."""
+    if not elem_consts or not os.path.isdir(output_dir):
+        return None
+    new_locs = {loc_val for _, _, loc_val, _ in elem_consts if loc_val}
+    if not new_locs:
+        return None
+    best_file, best_overlap = None, 0
+    for fname in os.listdir(output_dir):
+        if not fname.endswith(ext):
+            continue
+        fpath = os.path.join(output_dir, fname)
+        try:
+            content = open(fpath).read()
+        except Exception:
+            continue
+        overlap = sum(1 for v in new_locs if v in content)
+        if overlap / len(new_locs) >= 0.5 and overlap > best_overlap:
+            best_overlap, best_file = overlap, fpath
+    return best_file
+
+
+def _merge_into_existing_java(existing_path: str, new_content: str) -> None:
+    """Inject constants and methods from new_content that are absent from existing_path."""
+    with open(existing_path) as f:
+        existing = f.read()
+
+    # Constants: lines like "    private static final Locator X = ..."
+    new_consts = re.findall(r'    private static final Locator [^\n]+;', new_content)
+    # Methods: "    public ... { ... }" blocks (non-greedy per method)
+    new_methods = re.findall(r'(    public [^\n]+\{[^}]+\})', new_content, re.DOTALL)
+
+    const_additions, method_additions = [], []
+    for line in new_consts:
+        m = re.search(r'"([^"]+)"', line)
+        if m and m.group(1) not in existing:
+            const_additions.append(line)
+    for block in new_methods:
+        m = re.match(r'    public \w+ (\w+)\(', block)
+        if m and (m.group(1) + '(') not in existing:
+            method_additions.append(block)
+
+    if not const_additions and not method_additions:
+        return
+
+    if const_additions:
+        constructor_m = re.search(r'    public \w+\(WebDriver driver\)', existing)
+        if constructor_m:
+            pos = constructor_m.start()
+            existing = existing[:pos] + '\n'.join(const_additions) + '\n' + existing[pos:]
+
+    if method_additions:
+        last_brace = existing.rfind('\n}')
+        if last_brace >= 0:
+            existing = existing[:last_brace] + '\n\n' + '\n\n'.join(method_additions) + existing[last_brace:]
+
+    with open(existing_path, 'w') as f:
+        f.write(existing)
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+_GENERATORS = {
+    "selenium-java":     (_generate_java,             ".java"),
+    "selenium-csharp":   (_generate_csharp,           ".cs"),
+    "selenium-python":   (_generate_selenium_python,  ".py"),
+    "playwright-js":     (_generate_playwright_js,    ".js"),
+    "playwright-ts":     (_generate_playwright_ts,    ".ts"),
+    "playwright-python": (_generate_playwright_python, ".py"),
+    "cypress-js":        (_generate_cypress_js,       ".js"),
+    "cypress-ts":        (_generate_cypress_ts,       ".ts"),
+}
+
+
+def _nodes_iter_from_graph(graph: dict):
+    raw_nodes = graph.get("nodes", {})
+    if isinstance(raw_nodes, list):
+        return [(n.get("nodeId", str(i)), n) for i, n in enumerate(raw_nodes)]
+    return list(raw_nodes.items())
+
+
+def _hydrate_graph_elements(graph: dict) -> dict:
+    """Re-hydrate node.elements from globalElements + ownElements for split-format graphs.
+    Safe to call on old-format graphs (no-op if ownElements absent)."""
+    global_elements = graph.get("globalElements") or {}
+    if not global_elements:
+        return graph
+    raw_nodes = graph.get("nodes", {})
+    nodes_iter = raw_nodes.values() if isinstance(raw_nodes, dict) else raw_nodes
+    for node in nodes_iter:
+        if "ownElements" in node:
+            inherited = [
+                global_elements[eid]
+                for eid in (node.get("inheritedElementIds") or [])
+                if eid in global_elements
+            ]
+            node["elements"] = inherited + (node.get("ownElements") or [])
+    return graph
+
+
+def _generate_base_page(global_elements: dict, target_tool: str, output_dir: str,
+                        name_registry: dict) -> str | None:
+    """Generate a BasePage class file from globalElements for the given target_tool.
+    Returns the file path written, or None if nothing was generated."""
+    if not global_elements:
+        return None
+
+    elements = list(global_elements.values())
+    fake_node = {"elements": elements}
+    fake_graph = {"nodes": {}, "edges": []}
+    elem_consts, _ = _extract_elements(fake_node, "__base__", fake_graph, name_registry)
+    if not elem_consts:
+        return None
+
+    def _java_str(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
+    global_dir = os.path.join(output_dir, "global")
+    if target_tool == "selenium-java":
+        constants = "\n".join(
+            f'    protected static final Locator GLOBAL_{cname} = new Locator("{loc_type}", "{_java_str(loc_val)}");'
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt: dict[str, int] = {}
+        method_lines_gt = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"GLOBAL_{cname}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix, sig, body = "enter", "(String value)", f"fill({gcname}, value)"
+            elif etype in ("select", "combobox"):
+                prefix, sig, body = "select", "(String value)", f"select({gcname}, value)"
+            else:
+                prefix, sig, body = "click", "()", f"click({gcname})"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt)
+            mname = "global" + raw_name[0].upper() + raw_name[1:]
+            method_lines_gt.append(f"    public Object {mname}{sig} {{ {body}; return null; }}")
+        methods = "\n".join(method_lines_gt)
+        content = (
+            HEADER +
+            "package global;\n\nimport org.openqa.selenium.WebDriver;\nimport base.BasePage;\nimport base.Locator;\n\n"
+            "public class GlobalElement extends BasePage {\n\n"
+            f"{constants}\n\n"
+            "    public GlobalElement(WebDriver driver) { super(driver); }\n\n"
+            f"{methods}\n"
+            "}\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "GlobalElement.java")
+
+    elif target_tool == "selenium-csharp":
+        constants = "\n".join(
+            f"    protected static readonly By GLOBAL_{cname} = {_cs_by(loc_type, loc_val)};"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt2: dict[str, int] = {}
+        cs_method_lines = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"GLOBAL_{cname}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix, sig, body = "enter", "(string value)", f"Fill({gcname}, value)"
+            elif etype in ("select", "combobox"):
+                prefix, sig, body = "select", "(string value)", f"Select({gcname}, value)"
+            else:
+                prefix, sig, body = "click", "()", f"Click({gcname})"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt2)
+            mname = "Global" + raw_name[0].upper() + raw_name[1:]
+            cs_method_lines.append(f"    public object {mname}{sig} {{ {body}; return null; }}")
+        methods = "\n".join(cs_method_lines)
+        content = (
+            HEADER +
+            "using OpenQA.Selenium;\nusing Base;\n\nnamespace Global {\n"
+            "    public class GlobalElement : BasePage {\n\n"
+            f"{constants}\n\n"
+            "        public GlobalElement(IWebDriver driver) : base(driver) { }\n\n"
+            f"{methods}\n"
+            "    }\n}\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "GlobalElement.cs")
+
+    elif target_tool == "selenium-python":
+        constants = "\n".join(
+            f"    GLOBAL_{cname} = ({_py_locator(loc_type, loc_val)})"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt3: dict[str, int] = {}
+        py_method_lines = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"GLOBAL_{cname}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix = "enter"
+                body = f"self.fill(self.{gcname}, value)"
+                sig = "(self, value: str) -> object"
+            elif etype in ("select", "combobox"):
+                prefix = "select"
+                body = f"self.select(self.{gcname}, value)"
+                sig = "(self, value: str) -> object"
+            else:
+                prefix = "click"
+                body = f"self.click(self.{gcname})"
+                sig = "(self) -> object"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt3)
+            snake = "global_" + re.sub(r"([A-Z])", r"_\1", raw_name).lstrip("_").lower()
+            py_method_lines.append(f"    def {snake}{sig}:\n        {body}\n        return None")
+        methods = "\n".join(py_method_lines)
+        content = (
+            HEADER_PY +
+            "from selenium.webdriver.common.by import By\nfrom base_page import BasePage\n\n"
+            "class GlobalElement(BasePage):\n"
+            "    def __init__(self, driver):\n"
+            "        super().__init__(driver)\n\n"
+            f"{constants}\n\n"
+            f"{methods}\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "global_element.py")
+
+    elif target_tool in ("playwright-js", "cypress-js"):
+        fields = "\n".join(
+            f"        this.global_{cname.lower()} = page.locator({_pw_locator(loc_type, loc_val)});"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt4: dict[str, int] = {}
+        js_method_lines = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"global_{cname.lower()}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix, sig, body = "enter", "(value)", f"await this.{gcname}.fill(value)"
+            elif etype in ("select", "combobox"):
+                prefix, sig, body = "select", "(value)", f"await this.{gcname}.selectOption(value)"
+            else:
+                prefix, sig, body = "click", "()", f"await this.{gcname}.click()"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt4)
+            mname = "global" + raw_name[0].upper() + raw_name[1:]
+            js_method_lines.append(f"    async {mname}{sig} {{ {body}; return null; }}")
+        methods = "\n".join(js_method_lines)
+        content = (
+            HEADER +
+            "const { BasePage } = require('../BasePage');\n\n"
+            "class GlobalElement extends BasePage {\n"
+            "    constructor(page) {\n"
+            "        super(page);\n"
+            f"{fields}\n"
+            "    }\n\n"
+            f"{methods}\n"
+            "}\n\n"
+            "module.exports = { GlobalElement };\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "GlobalElement.js")
+
+    elif target_tool in ("playwright-ts", "cypress-ts"):
+        decls = "\n".join(
+            f"    readonly global_{cname.lower()}: import('@playwright/test').Locator;"
+            for cname, _, _, _ in elem_consts
+        )
+        inits = "\n".join(
+            f"        this.global_{cname.lower()} = page.locator({_pw_locator(loc_type, loc_val)});"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt5: dict[str, int] = {}
+        ts_method_lines = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"global_{cname.lower()}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix, sig, body = "enter", "(value: string): Promise<object>", f"await this.{gcname}.fill(value)"
+            elif etype in ("select", "combobox"):
+                prefix, sig, body = "select", "(value: string): Promise<object>", f"await this.{gcname}.selectOption(value)"
+            else:
+                prefix, sig, body = "click", "(): Promise<object>", f"await this.{gcname}.click()"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt5)
+            mname = "global" + raw_name[0].upper() + raw_name[1:]
+            ts_method_lines.append(f"    async {mname}{sig} {{ {body}; return null; }}")
+        methods = "\n".join(ts_method_lines)
+        content = (
+            HEADER +
+            "import { Page } from '@playwright/test';\nimport { BasePage } from '../BasePage';\n\n"
+            "export class GlobalElement extends BasePage {\n"
+            f"{decls}\n\n"
+            "    constructor(page: Page) {\n"
+            "        super(page);\n"
+            f"{inits}\n"
+            "    }\n\n"
+            f"{methods}\n"
+            "}\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "GlobalElement.ts")
+
+    elif target_tool == "playwright-python":
+        fields = "\n".join(
+            f"        self.global_{cname.lower()} = page.locator({_pw_py_locator(loc_type, loc_val)})"
+            for cname, loc_type, loc_val, _ in elem_consts
+        )
+        seen_methods_gt6: dict[str, int] = {}
+        pwpy_method_lines = []
+        for cname, _, _, elem in elem_consts:
+            gcname = f"global_{cname.lower()}"
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            label = _elem_label(elem, sk)
+            etype = elem.get("elementType", "")
+            if etype in ("textbox", "textarea", "search"):
+                prefix = "enter"
+                body = f"self.{gcname}.fill(value)"
+                sig = "(self, value: str) -> object"
+            elif etype in ("select", "combobox"):
+                prefix = "select"
+                body = f"self.{gcname}.select_option(value)"
+                sig = "(self, value: str) -> object"
+            else:
+                prefix = "click"
+                body = f"self.{gcname}.click()"
+                sig = "(self) -> object"
+            raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt6)
+            snake = "global_" + re.sub(r"([A-Z])", r"_\1", raw_name).lstrip("_").lower()
+            pwpy_method_lines.append(f"    def {snake}{sig}:\n        {body}\n        return None")
+        methods = "\n".join(pwpy_method_lines)
+        content = (
+            HEADER_PY +
+            "from playwright.sync_api import Page\nfrom base_page import BasePage\n\n"
+            "class GlobalElement(BasePage):\n"
+            "    def __init__(self, page: Page):\n"
+            "        super().__init__(page)\n"
+            f"{fields}\n\n"
+            f"{methods}\n"
+        )
+        os.makedirs(global_dir, exist_ok=True)
+        path = os.path.join(global_dir, "global_element.py")
+
+    else:
+        return None
+
+    with open(path, "w") as f:
+        f.write(content)
+    logger.info(f"Generated GlobalElement ({target_tool}) — {len(elem_consts)} shared locators → {path}")
+    return path
+
+
+def generate_all_v2(graph_path: str, output_dir: str, target_tool: str = "selenium-java") -> dict:
+    if target_tool not in _GENERATORS:
+        logger.warning(f"Unknown target_tool '{target_tool}', defaulting to selenium-java")
+        target_tool = "selenium-java"
+
+    generate_fn, ext = _GENERATORS[target_tool]
+
     with open(graph_path) as f:
         graph = json.load(f)
 
-    os.makedirs(output_dir, exist_ok=True)
-    written = []
-    seen_classes: set[str] = set()
+    # Re-hydrate node.elements for split-format graphs (globalElements + ownElements)
+    graph = _hydrate_graph_elements(graph)
 
-    # nodes is a dict: { node_id: node_data } — iterate .items() to get both
-    for node_id, node in graph.get("nodes", {}).items():
+    # Load persisted name registry so element/method names survive re-runs
+    registry_path = os.path.join(os.path.dirname(graph_path), "name_registry.json")
+    name_registry = _load_name_registry(registry_path)
+
+    global_elements = graph.get("globalElements") or {}
+    has_base_page = bool(global_elements)
+
+    # Generate BasePage from shared elements (globalElements → BasePage class)
+    if has_base_page:
+        _generate_base_page(global_elements, target_tool, output_dir, name_registry)
+
+    # ── Pass 1: resolve all final class names before generating any code ─────────
+    # This ensures cross-file references (edge_targets) use the collision-resolved
+    # name rather than re-deriving an inconsistent name during generation.
+    node_id_to_class: dict[str, str] = {}
+    seen_base_names: dict[str, int] = {}
+    for node_id, node in _nodes_iter_from_graph(graph):
         elements = node.get("elements", [])
         if not elements:
+            continue
+        base = _class_name_from_node(node)
+        count = seen_base_names.get(base, 0) + 1
+        seen_base_names[base] = count
+        # Collision: SearchCmsPage → SearchCmsPage2, SearchCmsPage3 (no hex junk)
+        node_id_to_class[node_id] = base if count == 1 else f"{base[:-4]}{count}Page"
+
+    # ── Snapshot existing method names before overwriting (for broken-reference scan) ─
+    old_method_names: set[str] = set()
+    if target_tool == "selenium-java" and os.path.isdir(output_dir):
+        old_method_names = _collect_method_names(output_dir, ext)
+
+    # ── Stale file cleanup — remove page files that no longer correspond to any node ─
+    expected_files = {f"{cn}{ext}" for cn in node_id_to_class.values()}
+    protected_files = {"GlobalElement.java", "BasePage.java", "GlobalElement.cs", "BasePage.cs",
+                       "global_element.py", "base_page.py"}
+    if os.path.isdir(output_dir):
+        for existing_f in os.listdir(output_dir):
+            if existing_f.endswith(ext) and existing_f not in expected_files and existing_f not in protected_files:
+                try:
+                    os.remove(os.path.join(output_dir, existing_f))
+                    logger.info(f"Removed stale file: {existing_f}")
+                except OSError as e:
+                    logger.warning(f"Could not remove stale file {existing_f}: {e}")
+
+    # ── Pass 2: generate code, using node_id_to_class for consistent references ─
+    nodes_iter = _nodes_iter_from_graph(graph)
+
+    os.makedirs(output_dir, exist_ok=True)
+    written = []
+
+    for node_id, node in nodes_iter:
+        class_name = node_id_to_class.get(node_id)
+        if not class_name:
             logger.info(f"Skipping {node.get('url', '?')} — no interactable elements")
             continue
 
-        class_name = _class_name_from_node(node)
-        if class_name in seen_classes:
-            base = class_name[:-4]  # strip "Page"
-            counter = 2
-            while f"{base}{counter}Page" in seen_classes:
-                counter += 1
-            class_name = f"{base}{counter}Page"
-        seen_classes.add(class_name)
+        # Filter out elements whose ID is in inheritedElementIds — those are declared in
+        # GlobalElement and we don't want duplicate Locator constants in the page class.
+        # Selector-based and method-name-based checks are NOT needed: all GlobalElement
+        # methods are prefixed "global", so page-class method names can never clash with them.
+        # Exception: edge trigger elements must stay even if inherited — they need a
+        # page-specific return-type method to express the navigation.
+        inherited_ids = set(node.get("inheritedElementIds") or [])
+        edge_trigger_ids: set[str] = {
+            e.get("trigger", {}).get("elementId", "")
+            for e in graph.get("edges", [])
+            if e.get("from") == node_id
+        }
 
-        content = _generate_class(node, node_id, graph, class_name)
-        file_path = os.path.join(output_dir, f"{class_name}.java")
+        def _is_inherited(e: dict) -> bool:
+            eid = e.get("id")
+            if eid in edge_trigger_ids:
+                return False  # must stay: this element drives a navigation edge
+            return eid in inherited_ids
+
+        page_node = {**node, "elements": [e for e in node.get("elements", []) if not _is_inherited(e)]}
+
+        elements = page_node.get("elements", [])
+        if not elements:
+            continue
+
+        content = generate_fn(page_node, node_id, graph, class_name,
+                              node_class_override=node_id_to_class,
+                              name_registry=name_registry)
+        file_path = os.path.join(output_dir, f"{class_name}{ext}")
+
+        # Always overwrite — names are stable via uniqueName cache; no merge needed
         with open(file_path, "w") as f:
             f.write(content)
         written.append({"class": class_name, "path": file_path, "node_id": node_id})
-        logger.info(f"Generated {class_name}.java — {len(elements)} elements")
+        logger.info(f"Generated {class_name}{ext} ({target_tool}) — {len(elements)} elements")
 
-    # Patch className into each graph node so the dashboard can display it
-    node_to_class = {w["node_id"]: w["class"] for w in written}
-    for node_id, node in graph.get("nodes", {}).items():
-        node["className"] = node_to_class.get(node_id, "")
-    with open(graph_path, "w") as f:
-        json.dump(graph, f, indent=2)
+    # Persist name registry so subsequent runs reuse the same names
+    _save_name_registry(registry_path, name_registry)
 
-    validation_failures = validate_all(written)
-    return {"written": written, "count": len(written), "validation_failures": validation_failures}
+    validation_failures = validate_all(written) if target_tool == "selenium-java" else {}
+
+    # ── Broken test reference scan ────────────────────────────────────────────
+    broken_references: list[dict] = []
+    if target_tool == "selenium-java" and old_method_names:
+        new_method_names = _collect_method_names(output_dir, ext)
+        test_root = os.path.join(os.path.dirname(output_dir), "..", "..", "src", "test", "java")
+        test_root = os.path.normpath(test_root)
+        broken_references = scan_broken_test_references(output_dir, old_method_names, new_method_names, test_root)
+
+    return {"written": written, "count": len(written),
+            "validation_failures": validation_failures,
+            "broken_references": broken_references}
+
+
+def update_incrementally_v2(diff_report_path: str, graph_path: str, output_dir: str,
+                            target_tool: str) -> dict:
+    """Regenerate only pages that have added or renamed elements; leave others untouched."""
+    if target_tool not in _GENERATORS:
+        target_tool = "selenium-java"
+
+    with open(diff_report_path) as f:
+        diff = json.load(f)
+    with open(graph_path) as f:
+        graph = json.load(f)
+
+    registry_path = os.path.join(os.path.dirname(graph_path), "name_registry.json")
+    name_registry = _load_name_registry(registry_path)
+
+    generate_fn, ext = _GENERATORS[target_tool]
+    nodes_iter = _nodes_iter_from_graph(graph)
+
+    # Collect selectorKeys that changed
+    changed_sks: set[str] = set()
+    for item in diff.get("added", []):
+        changed_sks.add(item.get("selectorKey", ""))
+    for item in diff.get("renamed", []):
+        changed_sks.add(item.get("oldSelectorKey", ""))
+
+    if not changed_sks:
+        logger.info("update_incrementally_v2: no added/renamed elements — nothing to regenerate")
+        return {"written": [], "count": 0}
+
+    # Map changed selectorKeys → node_ids that own them
+    changed_node_ids: set[str] = set()
+    for node_id, node in nodes_iter:
+        for elem in node.get("elements", []):
+            sk = elem.get("selectorKey") or elem.get("_selector") or ""
+            if sk in changed_sks:
+                changed_node_ids.add(node_id)
+
+    # First pass: resolve all class names for consistent cross-file references
+    node_id_to_class: dict[str, str] = {}
+    seen_base_names: dict[str, int] = {}
+    for node_id, node in _nodes_iter_from_graph(graph):
+        if not node.get("elements"):
+            continue
+        base = _class_name_from_node(node)
+        count = seen_base_names.get(base, 0) + 1
+        seen_base_names[base] = count
+        node_id_to_class[node_id] = base if count == 1 else f"{base[:-4]}{count}Page"
+
+    os.makedirs(output_dir, exist_ok=True)
+    written = []
+
+    for node_id, node in nodes_iter:
+        if node_id not in changed_node_ids:
+            continue
+        class_name = node_id_to_class.get(node_id)
+        if not class_name:
+            continue
+        elements = node.get("elements", [])
+        if not elements:
+            continue
+
+        content = generate_fn(node, node_id, graph, class_name,
+                              node_class_override=node_id_to_class,
+                              name_registry=name_registry)
+        file_path = os.path.join(output_dir, f"{class_name}{ext}")
+        with open(file_path, "w") as f:
+            f.write(content)
+        written.append({"class": class_name, "path": file_path, "node_id": node_id})
+        logger.info(f"Incremental regen: {class_name}{ext} ({len(elements)} elements, {target_tool})")
+
+    _save_name_registry(registry_path, name_registry)
+
+    return {"written": written, "count": len(written)}

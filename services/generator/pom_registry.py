@@ -10,7 +10,14 @@ def _pascal(s: str) -> str:
     return "".join(w[0].upper() + w[1:] for w in re.sub(r"[^a-zA-Z0-9 ]", " ", s).split() if w)
 
 
-def _method_name(prefix: str, label: str) -> str:
+def _method_name(prefix: str, label: str, el: dict | None = None) -> str:
+    # Mirror pom_generator_v2: when uniqueName is set, use label directly (no action prefix)
+    if el and el.get("uniqueName"):
+        words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
+        alpha = [w for w in words if w and not w.isdigit()]
+        words = alpha if alpha else words
+        if words:
+            return words[0].lower() + "".join(w.capitalize() for w in words[1:])
     words = re.sub(r"[^a-zA-Z0-9 ]", " ", label).split()
     if not words:
         return prefix + "Element"
@@ -33,55 +40,32 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
         edges_by_from.setdefault(from_id, []).append(e)
 
     def _class_name_for_node(node: dict) -> str:
-        page_ref = (node.get("pageRef") or "").strip()
-        if page_ref and page_ref.lower() not in {"", "page", "error page", "untitled"}:
-            raw = _pascal(page_ref)
-            return raw if raw.endswith("Page") else raw + "Page"
-        label = (node.get("nodeName") or node.get("heading") or node.get("title") or "Page").strip()
-        return _pascal(label) + "Page"
+        from urllib.parse import urlparse
+        if node.get("className"):
+            cn = node["className"].strip()
+            return cn if cn.endswith("Page") else cn + "Page"
+        _SKIP = {"error page", "access denied", "page", "untitled", "403", "404", "500", ""}
+        node_name = (node.get("nodeName") or "").strip()
+        if node_name and node_name.lower() not in _SKIP and len(node_name) <= 80:
+            return _pascal(node_name) + "Page"
+        heading = (node.get("heading") or "").strip()
+        if heading and heading.lower() not in _SKIP and len(heading) <= 80:
+            return _pascal(heading) + "Page"
+        title = (node.get("title") or "").strip()
+        if title.lower() not in _SKIP:
+            return _pascal(title) + "Page"
+        url = node.get("url", "")
+        parsed = urlparse(url)
+        ignore = {"en-us", "en-US", "common", "members", "pages", "aspx", ""}
+        parts = [p.rsplit(".", 1)[0] for p in parsed.path.strip("/").split("/")
+                 if p and p.lower() not in ignore]
+        label = " ".join(parts[-2:]) if parts else (parsed.hostname or "Unknown").split(".")[0]
+        return _pascal(label) + "Page" if label else "UnknownPage"
 
     registry = []
 
-    # Inherited GlobalTabs methods — registered under each child page that has the element
-    global_elements = graph.get("globalElements") or {}
-    if global_elements:
-        for node_id, node in nodes_dict.items():
-            inherited_ids = node.get("inheritedElementIds") or []
-            if not inherited_ids:
-                continue
-            class_name = _class_name_for_node(node)
-            for eid in inherited_ids:
-                elem = global_elements.get(eid)
-                if not elem:
-                    continue
-                sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
-                if not sk:
-                    continue
-                label = elem.get("label") or elem.get("name") or sk
-                action = elem.get("actionType") or elem.get("elementType") or "click"
-                method_name = _method_name("click", label)
-                registry.append({
-                    "className":       class_name,
-                    "methodName":      method_name,
-                    "selectorKey":     sk,
-                    "actionType":      action,
-                    "parameterNames":  [],
-                    "returnType":      "void",
-                    "isNavigation":    False,
-                    "navigatesTo":     "",
-                    "description":     f"clicks the {label} on {class_name} (inherited from GlobalTabs)",
-                    "allAttributes":   elem.get("allAttributes") or {},
-                    "selectorFallbacks": elem.get("selectorFallbacks") or [],
-                })
-
     for node_id, node in nodes_dict.items():
-        page_ref = (node.get("pageRef") or "").strip()
-        if page_ref and page_ref.lower() not in {"", "page", "error page", "untitled"}:
-            raw = _pascal(page_ref)
-            class_name = raw if raw.endswith("Page") else raw + "Page"
-        else:
-            label = (node.get("nodeName") or node.get("heading") or node.get("title") or "Page").strip()
-            class_name = _pascal(label) + "Page"
+        class_name = _class_name_for_node(node)
         my_edges = edges_by_from.get(node_id, [])
         # crawl-ai edges use trigger.elementName as selector key fallback
         edge_sk = {
@@ -96,7 +80,7 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
             sk = elem.get("selectorKey") or elem.get("_selector") or elem.get("interactionKey") or ""
             if not sk:
                 continue
-            label = elem.get("label") or elem.get("name") or sk
+            label = elem.get("uniqueName") or elem.get("label") or elem.get("name") or sk
             _raw = (elem.get("actionType") or elem.get("elementType") or "").lower()
             if _raw in ("textbox", "textarea", "fill", "input"):
                 action = "fill"
@@ -114,22 +98,22 @@ def generate_registry(graph_path: str, java_dir: str) -> dict:
                     navigates_to = _pascal(to_node.get("title", "")) + "Page"
 
             if sk in edge_sk:
-                method_name = _method_name("click", label)
+                method_name = _method_name("click", label, el=elem)
                 params = []
                 ret_type = navigates_to or class_name
                 desc = f"clicks the {label} on {class_name} and navigates to {navigates_to}" if navigates_to else f"clicks the {label} on {class_name}"
             elif action == "fill":
-                method_name = _method_name("enter", label)
+                method_name = _method_name("enter", label, el=elem)
                 params = [{"name": "value", "type": "String"}]
                 ret_type = class_name
                 desc = f"fills the {label} on {class_name}"
             elif action == "select":
-                method_name = _method_name("select", label)
+                method_name = _method_name("select", label, el=elem)
                 params = [{"name": "value", "type": "String"}]
                 ret_type = class_name
                 desc = f"selects the {label} on {class_name}"
             else:
-                method_name = _method_name("click", label)
+                method_name = _method_name("click", label, el=elem)
                 params = []
                 ret_type = class_name
                 desc = f"clicks the {label} on {class_name}"
