@@ -248,6 +248,31 @@ export default function ExecutionTab() {
   const selected  = tcs.filter(tc => selectedIds.includes(tc.tc_id))
   const suiteMethods = selected.map(tc => tc.method_name).filter(Boolean)
 
+  // Build last-run-by-method and pass-rate from run history
+  const lastRunByMethod = React.useMemo(() => {
+    const map: Record<string, { ts: string; status: string }> = {}
+    for (const run of history as typeof history) {
+      for (const t of run.tests) {
+        if (!map[t.method] || run.started_at > map[t.method].ts) {
+          map[t.method] = { ts: run.started_at, status: t.status }
+        }
+      }
+    }
+    return map
+  }, [history])
+
+  const passRateByMethod = React.useMemo(() => {
+    const counts: Record<string, { pass: number; total: number }> = {}
+    for (const run of history as typeof history) {
+      for (const t of run.tests) {
+        if (!counts[t.method]) counts[t.method] = { pass: 0, total: 0 }
+        counts[t.method].total++
+        if (['PASS', 'PASSED'].includes((t.status ?? '').toUpperCase())) counts[t.method].pass++
+      }
+    }
+    return counts
+  }, [history])
+
   // ── actions ────────────────────────────────────────────────────────────────
 
   const handleCreateSuite = () => {
@@ -358,13 +383,34 @@ export default function ExecutionTab() {
       },
     },
     { title: 'Status', width: 140, render: (_: unknown, row: TestCase) => <StatusBadge status={row.status} /> },
-    { title: 'Confidence', width: 100, render: (_: unknown, row: TestCase) => {
-      const c = row.confidence
-      if (c == null) return <span style={{ color: C.muted }}>—</span>
-      return <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: c >= 0.75 ? C.green : C.amber }}>{(c * 100).toFixed(0)}%</span>
-    }},
-    { title: 'Last Run', width: 140, render: (_: unknown, row: TestCase) =>
-      <span style={{ fontSize: 12, color: C.muted }}>{row.last_run ? fmtDateTime(row.last_run) : '—'}</span>
+    {
+      title: 'Pass Rate', width: 110,
+      render: (_: unknown, row: TestCase) => {
+        const c = passRateByMethod[row.method_name]
+        if (!c || c.total === 0) return <span style={{ color: C.muted }}>—</span>
+        const pct = Math.round((c.pass / c.total) * 100)
+        const color = pct >= 80 ? C.green : pct >= 50 ? C.amber : C.red
+        return (
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color }}>
+            {pct}%{' '}
+            <span style={{ color: C.muted, fontSize: 10 }}>({c.pass}/{c.total})</span>
+          </span>
+        )
+      },
+    },
+    {
+      title: 'Last Run', width: 160,
+      render: (_: unknown, row: TestCase) => {
+        const lr = lastRunByMethod[row.method_name]
+        if (!lr && !row.last_run) return <span style={{ fontSize: 12, color: C.muted }}>—</span>
+        const ts = lr?.ts ?? row.last_run ?? ''
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: 11, color: C.muted }}>{fmtDateTime(ts)}</span>
+            {lr?.status && <StatusBadge status={lr.status} />}
+          </div>
+        )
+      },
     },
   ]
 

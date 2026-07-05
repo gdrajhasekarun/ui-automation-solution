@@ -9,6 +9,7 @@ export interface TestCase {
   method_name: string
   parameters: Parameter[]
   review_reason: string
+  plan_steps?: PlanStep[]
   last_run?: string
   created_at: string
   updated_at: string

@@ -333,9 +333,13 @@ async def plan_save(body: dict):
 
     now = datetime.now(timezone.utc).isoformat()
     records = _load_tc_json(app_id)
+    # Build a lookup from the request body so we can persist plan_steps
+    body_tc_map = {tc.get("tc_name", ""): tc for tc in body.get("test_cases", [])}
     for entry in data.get("saved", []):
         tc_name = entry.get("tc_name", "")
         existing = records.get(tc_name, {})
+        body_tc = body_tc_map.get(tc_name, {})
+        result_from_body = body_tc.get("result", {})
         records[tc_name] = {
             **existing,
             "tc_name":       tc_name,
@@ -345,8 +349,10 @@ async def plan_save(body: dict):
             "file_path":     entry.get("file_path", ""),
             "class_name":    entry.get("class_name", ""),
             "method_name":   entry.get("method_name", ""),
-            "parameters":    entry.get("parameters", []),
+            "parameters":    entry.get("parameters", []) or result_from_body.get("parameters", []),
             "review_reason": entry.get("review_reason", ""),
+            "plan_steps":    result_from_body.get("steps", result_from_body.get("plan_steps", [])),
+            "raw_steps":     body_tc.get("raw_steps", existing.get("raw_steps", [])),
             "updated_at":    now,
             "created_at":    existing.get("created_at", now),
         }

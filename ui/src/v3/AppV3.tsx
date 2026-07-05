@@ -4,10 +4,11 @@ import {
   Layout, Modal, Select, Space, Switch, Tabs, Tag, Tooltip, Typography, theme as antTheme,
 } from 'antd'
 import {
-  ApiOutlined, BulbFilled, BulbOutlined, CheckCircleOutlined,
-  CloseCircleOutlined, DatabaseOutlined, NodeIndexOutlined,
-  PlayCircleOutlined, RocketOutlined, SyncOutlined, ThunderboltOutlined,
+  BulbFilled, BulbOutlined, CheckCircleOutlined, BuildOutlined, CompassOutlined,
+  CloseCircleOutlined, NodeIndexOutlined,
+  PlayCircleOutlined, SyncOutlined, ThunderboltOutlined, ReloadOutlined,
 } from '@ant-design/icons'
+import GlobalInfoBar from '../components/GlobalInfoBar'
 import { ThemeContext, DARK, LIGHT } from '../theme'
 import { useAppDispatch, useAppSelector } from '../store'
 import { setAppId, setAppUrl, setFrameworkDir, setTargetTool, toggleTheme, bumpKbRefresh } from '../store/appSlice'
@@ -26,6 +27,7 @@ import {
   useInterpretStoryMutation,
 } from './apiV3'
 import type { UiEvent, StoryInterpretResp } from '../types'
+import { useTriggerCrawlMutation } from '../store/api'
 
 const { Header, Content, Sider } = Layout
 const MONO: React.CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -686,7 +688,10 @@ function CrawlTab({ C, isDark }: { C: typeof DARK; isDark: boolean }) {
 
 // ── Knowledge Base tab — V3 normalized graph ─────────────────────────────────
 function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
+  const dispatch    = useAppDispatch()
   const reduxAppId  = useAppSelector(s => s.app.appId)
+  const reduxAppUrl = useAppSelector(s => s.app.appUrl)
+  const reduxFwDir  = useAppSelector(s => s.app.frameworkDir)
   const targetTool  = useAppSelector(s => s.app.targetTool)
   const refreshKey  = useAppSelector(s => s.app.kbRefreshKey)
 
@@ -697,6 +702,57 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
   const [fetchedAt,  setFetchedAt]  = useState<string | null>(null)
   const [source,     setSource]     = useState<'ai' | 'graph' | null>(null)
   const [error,      setError]      = useState<string | null>(null)
+
+  // Re-crawl modal state
+  const [rcOpen,    setRcOpen]    = useState(false)
+  const [rcIntent,  setRcIntent]  = useState('')
+  const [rcUrl,     setRcUrl]     = useState(reduxAppUrl)
+  const [rcFwDir,   setRcFwDir]   = useState(reduxFwDir)
+  const [recrawling, setRecrawling] = useState(false)
+  const [triggerCrawl] = useTriggerCrawlMutation()
+
+  // Keep re-crawl fields in sync with redux
+  useEffect(() => { setRcUrl(reduxAppUrl) }, [reduxAppUrl])
+  useEffect(() => { setRcFwDir(reduxFwDir) }, [reduxFwDir])
+
+  const handleRecrawl = async () => {
+    if (!localAppId.trim()) return
+    setRecrawling(true)
+    try {
+      await triggerCrawl({
+        app_id: localAppId.trim(),
+        app_url: rcUrl.trim(),
+        build_id: 'recrawl-' + Date.now(),
+        trigger_type: 'UPDATE',
+        flow_name: rcIntent.trim() || undefined,
+        headless: true,
+        framework_dir: rcFwDir.trim() || undefined,
+      }).unwrap()
+
+      // Wait for generator completion then refresh graph
+      await new Promise<void>(resolve => {
+        const since = new Date().toISOString()
+        const sse = new EventSource(`/dashboard/api/events/${encodeURIComponent(localAppId.trim())}/stream?since=${encodeURIComponent(since)}`)
+        const timer = setTimeout(() => { sse.close(); resolve() }, 300000)
+        sse.onmessage = (ev) => {
+          try {
+            const event = JSON.parse(ev.data)
+            if (['GENERATOR_COMPLETE', 'POM_COMPLETE', 'GENERATOR'].includes(event.stage) && event.level === 'SUCCESS') {
+              clearTimeout(timer); sse.close(); resolve()
+            }
+          } catch { /* ignore */ }
+        }
+        sse.onerror = () => { clearTimeout(timer); sse.close(); resolve() }
+      })
+      setRcOpen(false)
+      setRcIntent('')
+      dispatch(bumpKbRefresh())
+    } catch (_e) {
+      /* silently fail — user can retry */
+    } finally {
+      setRecrawling(false)
+    }
+  }
 
   // Keep local input in sync when redux appId changes (e.g. after triggering a crawl)
   useEffect(() => { if (reduxAppId) setLocalAppId(reduxAppId) }, [reduxAppId])
@@ -762,7 +818,7 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
         display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16,
         paddingBottom: 12, borderBottom: `1px solid ${C.border}`, flexShrink: 0, flexWrap: 'wrap',
       }}>
-        <DatabaseOutlined style={{ color: C.blue, fontSize: 16 }} />
+        <BulbOutlined style={{ color: C.blue, fontSize: 16 }} />
         <span style={{ ...MONO, fontSize: 14, fontWeight: 600, color: C.text }}>Knowledge Base</span>
 
         {/* App ID input — lets users load any graph directly */}
@@ -818,6 +874,16 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
             </Tag>
           </Tooltip>
         )}
+
+        <div style={{ flex: 1 }} />
+        <Button
+          icon={<ReloadOutlined />}
+          size="small"
+          onClick={() => setRcOpen(true)}
+          style={{ ...MONO, fontSize: 12, flexShrink: 0 }}
+        >
+          Re-crawl
+        </Button>
       </div>
 
       {/* ── Eval panel ── */}
@@ -917,6 +983,42 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
           />
         )}
       </div>
+
+      {/* Re-crawl Modal */}
+      <Modal
+        open={rcOpen}
+        title={<span style={{ ...MONO, fontSize: 14 }}>Re-crawl App</span>}
+        onCancel={() => { setRcOpen(false); setRcIntent('') }}
+        footer={[
+          <Button key="cancel" onClick={() => { setRcOpen(false); setRcIntent('') }}>Cancel</Button>,
+          <Button key="start" type="primary" loading={recrawling} icon={<ReloadOutlined />} onClick={handleRecrawl}
+            disabled={!rcUrl.trim()}>
+            Start Re-crawl
+          </Button>,
+        ]}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4, ...MONO }}>App URL</div>
+            <Input value={rcUrl} placeholder="http://localhost:8080"
+              onChange={e => setRcUrl(e.target.value)} style={{ ...MONO, fontSize: 12 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4, ...MONO }}>Framework Path</div>
+            <Input value={rcFwDir} placeholder="./shared/java"
+              onChange={e => setRcFwDir(e.target.value)} style={{ ...MONO, fontSize: 12 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4, ...MONO }}>
+              Intent <span style={{ color: '#999', fontWeight: 400 }}>(optional — describe the flow to focus on)</span>
+            </div>
+            <Input.TextArea rows={3} value={rcIntent}
+              onChange={e => setRcIntent(e.target.value)}
+              placeholder="e.g. Login flow, Claims submission, Member portal"
+              style={{ ...MONO, fontSize: 12 }} />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -928,26 +1030,25 @@ export default function AppV3() {
   const C        = isDark ? DARK : LIGHT
 
   const [activeTab, setActiveTab] = useState('crawl')
-  const { data: health } = useV3GetCrawlHealthQuery()
 
   const TAB_LABEL: React.CSSProperties = { ...MONO, fontSize: 13, fontWeight: 500, letterSpacing: '0.02em' }
 
   const tabItems = [
     {
       key: 'crawl',
-      label: <span style={TAB_LABEL}><ThunderboltOutlined style={{ marginRight: 6 }} />Graph Crawl</span>,
+      label: <span style={TAB_LABEL}><CompassOutlined style={{ marginRight: 6 }} />App Cartographer</span>,
     },
     {
       key: 'graph',
-      label: <span style={TAB_LABEL}><DatabaseOutlined style={{ marginRight: 6 }} />Knowledge Base</span>,
+      label: <span style={TAB_LABEL}><BulbOutlined style={{ marginRight: 6 }} />App Intelligence</span>,
     },
     {
       key: 'td',
-      label: <span style={TAB_LABEL}><RocketOutlined style={{ marginRight: 6 }} />Test Design</span>,
+      label: <span style={TAB_LABEL}><BuildOutlined style={{ marginRight: 6 }} />Scenario Designer</span>,
     },
     {
       key: 'ex',
-      label: <span style={TAB_LABEL}><PlayCircleOutlined style={{ marginRight: 6 }} />Execution</span>,
+      label: <span style={TAB_LABEL}><PlayCircleOutlined style={{ marginRight: 6 }} />Run Center</span>,
     },
   ]
 
@@ -1003,19 +1104,6 @@ export default function AppV3() {
               />
             </div>
 
-            {/* Health pill */}
-            <Tooltip title={`Graph Crawler service: ${health?.status ?? 'checking…'}`}>
-              <Space size={5} style={{ cursor: 'default', flexShrink: 0 }}>
-                <ApiOutlined style={{
-                  color: ['idle','running'].includes(health?.status ?? '') ? C.green : C.muted,
-                  fontSize: 14,
-                }} />
-                <span style={{ ...MONO, fontSize: 11, color: C.muted }}>
-                  {health?.status ?? '…'}
-                </span>
-              </Space>
-            </Tooltip>
-
             <Tooltip title={isDark ? 'Light theme' : 'Dark theme'}>
               <Button type="text"
                 icon={isDark
@@ -1037,16 +1125,25 @@ export default function AppV3() {
               <CrawlTab C={C} isDark={isDark} />
             </div>
 
-            <div style={{ display: activeTab === 'graph' ? 'flex' : 'none', flex: 1, minHeight: 0, overflow: 'hidden', padding: 24, flexDirection: 'column' }}>
-              <KnowledgeBaseTab C={C} active={activeTab === 'graph'} />
+            <div style={{ display: activeTab === 'graph' ? 'flex' : 'none', flex: 1, minHeight: 0, overflow: 'hidden', flexDirection: 'column' }}>
+              <GlobalInfoBar />
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: 24 }}>
+                <KnowledgeBaseTab C={C} active={activeTab === 'graph'} />
+              </div>
             </div>
 
-            <div style={{ display: activeTab === 'td' ? 'block' : 'none', flex: 1, overflow: 'auto', padding: 24 }}>
-              <TestDesignTab onGoToExecution={() => setActiveTab('ex')} />
+            <div style={{ display: activeTab === 'td' ? 'flex' : 'none', flex: 1, overflow: 'auto', flexDirection: 'column' }}>
+              <GlobalInfoBar />
+              <div style={{ flex: 1, padding: 24 }}>
+                <TestDesignTab onGoToExecution={() => setActiveTab('ex')} active={activeTab === 'td'} />
+              </div>
             </div>
 
-            <div style={{ display: activeTab === 'ex' ? 'block' : 'none', flex: 1, overflow: 'auto', padding: 24 }}>
-              <ExecutionTab />
+            <div style={{ display: activeTab === 'ex' ? 'flex' : 'none', flex: 1, overflow: 'auto', flexDirection: 'column' }}>
+              <GlobalInfoBar />
+              <div style={{ flex: 1, padding: 24 }}>
+                <ExecutionTab />
+              </div>
             </div>
           </Content>
         </Layout>
