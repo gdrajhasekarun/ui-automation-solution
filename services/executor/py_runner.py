@@ -1,6 +1,5 @@
 """
 Runs pytest tests for the cms-app-crawler-py framework and returns normalized results.
-Requires pytest-json-report to be installed in the framework's environment.
 """
 
 import asyncio
@@ -18,10 +17,15 @@ _REPORT_FILE = "pytest-results.json"
 async def run(framework_dir: str, run_id: str, app_id: str,
               selected_tests: list[str], test_data: list[dict],
               dashboard_url: str = "", app_url: str = "") -> dict:
-    """
-    Write per-method JSON test data files, then run pytest for the selected tests.
-    Returns {"exit_code": int, "results": list[dict]}.
-    """
+    """Write per-method JSON test data, install deps, run pytest. Returns {"exit_code", "results"}."""
+    install = await asyncio.create_subprocess_exec(
+        "pip", "install", "-q", "-e", ".",
+        cwd=framework_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    await install.communicate()
+
     _write_testdata(framework_dir, test_data)
 
     report_path = os.path.join(framework_dir, _REPORT_FILE)
@@ -32,26 +36,19 @@ async def run(framework_dir: str, run_id: str, app_id: str,
     cmd = [
         "python", "-m", "pytest",
         "tests/generated/",
-        "--json-report",
-        f"--json-report-file={_REPORT_FILE}",
-        "--tb=short",
-        "-q",
+        "--json-report", f"--json-report-file={_REPORT_FILE}",
+        "--tb=short", "-q",
     ]
     if selected_tests:
-        # -k accepts an expression: "methodA or methodB"
-        k_expr = " or ".join(selected_tests)
-        cmd += ["-k", k_expr]
+        cmd += ["-k", " or ".join(selected_tests)]
 
     logger.info("Running pytest: %s in %s", " ".join(cmd), framework_dir)
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=framework_dir,
-        env=env,
+        *cmd, cwd=framework_dir, env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
     stdout, _ = await proc.communicate()
-    # pytest exit codes: 0=all passed, 1=some failed, 2=interrupted, 3=internal error, 5=no tests
     exit_code = proc.returncode if proc.returncode is not None else 1
     if stdout:
         logger.info("pytest output:\n%s", stdout.decode(errors="replace")[-2000:])

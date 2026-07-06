@@ -21,14 +21,22 @@ export interface PlanRunReq {
   app_id:      string
   tc_name:     string
   description: string
-  java_dir:    string
+  java_dir?:   string
+  ts_dir?:     string
+  js_dir?:     string
+  py_dir?:     string
+  framework?:  string
   steps?:      import('../types').RawTestCaseStep[]
 }
 
 export interface SavePlanReq {
   app_id:      string
-  java_dir:    string
-  test_cases:  { tc_name: string; result: unknown }[]
+  java_dir?:   string
+  ts_dir?:     string
+  js_dir?:     string
+  py_dir?:     string
+  framework?:  string
+  test_cases:  { tc_name: string; result: unknown; raw_steps?: import('../types').RawTestCaseStep[] }[]
 }
 
 export interface ExecuteRunReq {

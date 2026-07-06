@@ -1,6 +1,5 @@
 """
 Runs Jest tests for the cms-app-crawler-ts framework (via ts-jest) and returns normalized results.
-Identical execution to js_runner — ts-jest handles TS compilation transparently.
 """
 
 import asyncio
@@ -18,10 +17,23 @@ _REPORT_FILE = "jest-results.json"
 async def run(framework_dir: str, run_id: str, app_id: str,
               selected_tests: list[str], test_data: list[dict],
               dashboard_url: str = "", app_url: str = "") -> dict:
-    """
-    Write per-method JSON test data files, then run Jest (ts-jest) for the selected tests.
-    Returns {"exit_code": int, "results": list[dict]}.
-    """
+    """Write per-method JSON test data, install deps, run ts-jest. Returns {"exit_code", "results"}."""
+    install = await asyncio.create_subprocess_exec(
+        "npm", "install",
+        cwd=framework_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    await install.communicate()
+
+    pw_install = await asyncio.create_subprocess_exec(
+        "npx", "playwright", "install", "chromium",
+        cwd=framework_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    await pw_install.communicate()
+
     _write_testdata(framework_dir, test_data)
 
     report_path = os.path.join(framework_dir, _REPORT_FILE)
@@ -33,15 +45,12 @@ async def run(framework_dir: str, run_id: str, app_id: str,
     cmd = [
         "npx", "jest",
         "--testNamePattern", pattern,
-        "--json",
-        f"--outputFile={_REPORT_FILE}",
+        "--json", f"--outputFile={_REPORT_FILE}",
         "--forceExit",
     ]
     logger.info("Running ts-jest: %s in %s", " ".join(cmd), framework_dir)
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=framework_dir,
-        env=env,
+        *cmd, cwd=framework_dir, env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )

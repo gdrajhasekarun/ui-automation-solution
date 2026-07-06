@@ -84,13 +84,18 @@ def _build_test_block(planner_output: dict, description: str, method_name: str) 
         low_conf = f"    // WARNING: Low confidence ({confidence:.2f}) — verify this sequence manually\n"
 
     steps = [s for s in steps if s.get("methodName", "").lower() != "launch"]
-    chain_lines = [f"    const p = new {starting_class}(page);"]
+    chain_lines = [f"    let p = new {starting_class}(page);"]
     for step in steps:
         mname = step.get("methodName", "")
+        is_nav = step.get("isNavigation", False)
         if step.get("hasParameter") and step.get("parameterName"):
-            chain_lines.append(f"    await p.{mname}(data.{step['parameterName']});")
+            call = f"p.{mname}(data.{step['parameterName']})"
         else:
-            chain_lines.append(f"    await p.{mname}();")
+            call = f"p.{mname}()"
+        if is_nav:
+            chain_lines.append(f"    p = await {call};")
+        else:
+            chain_lines.append(f"    await {call};")
 
     if final_assertion.get("methodName"):
         a_param = final_assertion.get("parameterName", "")
@@ -135,12 +140,13 @@ def generate(planner_output: dict, app_id: str, framework_dir: str,
         method_name = f"{base_name}{i}"
 
     new_block = _build_test_block(planner_output, description, method_name)
-    page_import = f"const {{ {starting_class} }} = require('../../src/pages/generated/{starting_class}');"
+    page_import = f"const {{ {starting_class} }} = require('../../src/pages/{starting_class}');"
 
     if os.path.exists(file_path):
         with open(file_path) as f:
             content = f.read()
-        content = content.rstrip().rstrip("});").rstrip() + "\n" + new_block + _FILE_FOOTER
+        idx = content.rfind("});")
+        content = content[:idx].rstrip() + "\n" + new_block + _FILE_FOOTER
         with open(file_path, "w") as f:
             f.write(content)
         logger.info(f"Appended test to {class_name}.test.js")

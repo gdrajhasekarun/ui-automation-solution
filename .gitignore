@@ -14,7 +14,7 @@ build/
 # poetry.lock  ← do NOT ignore this
 
 # Node / React UI
-ui/node_modules/
+node_modules/
 ui/dist/
 ui/.vite/
 

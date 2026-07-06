@@ -584,6 +584,15 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
 
     field_name = lambda cname: cname.lower().replace("_", "")
 
+    # collect unique target classes for imports (keyed by elem_id, matching method loop below)
+    imported_js_classes: set[str] = set()
+    for _, _, _, elem in elem_consts:
+        elem_id = elem.get("id", "")
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
+            if not is_self:
+                imported_js_classes.add(target_class)
+
     constructor_lines = [
         f"        this.{field_name(cname)} = page.locator({_pw_locator(loc_type, loc_val)});"
         for cname, loc_type, loc_val, _ in elem_consts
@@ -638,11 +647,16 @@ def _generate_playwright_js(node: dict, node_id: str, graph: dict, class_name: s
 
     has_base = bool(graph.get("globalElements"))
     base_clause = " extends GlobalElement" if has_base else ""
-    base_import = "const { GlobalElement } = require('../global/GlobalElement');\n" if has_base else ""
+    base_import = "const { GlobalElement } = require('./global/GlobalElement');\n" if has_base else ""
     super_call = "        super(page);\n" if has_base else ""
+    nav_requires = "".join(
+        f"const {{ {cls} }} = require('./{cls}');\n"
+        for cls in sorted(imported_js_classes)
+    )
     return (
         HEADER +
         base_import +
+        nav_requires +
         f"class {class_name}{base_clause} {{\n"
         f"    constructor(page) {{\n"
         f"{super_call}"
@@ -665,11 +679,12 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
 
     field_name = lambda cname: cname.lower().replace("_", "")
 
-    # collect unique target classes for imports
+    # collect unique target classes for imports (keyed by elem_id, matching method loop below)
     imported_classes: set[str] = set()
-    for sk in [elem.get("selectorKey", "") for _, _, _, elem in elem_consts]:
-        if sk in edge_targets:
-            target_class, is_self = edge_targets[sk]
+    for _, _, _, elem in elem_consts:
+        elem_id = elem.get("id", "")
+        if elem_id in edge_targets:
+            target_class, is_self = edge_targets[elem_id]
             if not is_self:
                 imported_classes.add(target_class)
 
@@ -733,7 +748,7 @@ def _generate_playwright_ts(node: dict, node_id: str, graph: dict, class_name: s
 
     has_base = bool(graph.get("globalElements"))
     base_clause = " extends GlobalElement" if has_base else ""
-    base_import = "import { GlobalElement } from '../global/GlobalElement';\n" if has_base else ""
+    base_import = "import { GlobalElement } from './global/GlobalElement';\n" if has_base else ""
     super_call = "        super(page);\n" if has_base else "        this.page = page;\n"
     page_field = "" if has_base else "    readonly page: Page;\n"
 
@@ -1377,18 +1392,18 @@ def _generate_base_page(global_elements: dict, target_tool: str, output_dir: str
             label = _elem_label(elem, sk)
             etype = elem.get("elementType", "")
             if etype in ("textbox", "textarea", "search"):
-                prefix, sig, body = "enter", "(value: string): Promise<object>", f"await this.{gcname}.fill(value)"
+                prefix, sig, body = "enter", "(value: string): Promise<void>", f"await this.{gcname}.fill(value)"
             elif etype in ("select", "combobox"):
-                prefix, sig, body = "select", "(value: string): Promise<object>", f"await this.{gcname}.selectOption(value)"
+                prefix, sig, body = "select", "(value: string): Promise<void>", f"await this.{gcname}.selectOption(value)"
             else:
-                prefix, sig, body = "click", "(): Promise<object>", f"await this.{gcname}.click()"
+                prefix, sig, body = "click", "(): Promise<void>", f"await this.{gcname}.click()"
             raw_name = _pick_method_name(prefix, label, sk, elem, name_registry, seen_methods_gt5)
             mname = "global" + raw_name[0].upper() + raw_name[1:]
-            ts_method_lines.append(f"    async {mname}{sig} {{ {body}; return null; }}")
+            ts_method_lines.append(f"    async {mname}{sig} {{ {body}; }}")
         methods = "\n".join(ts_method_lines)
         content = (
             HEADER +
-            "import { Page } from '@playwright/test';\nimport { BasePage } from '../BasePage';\n\n"
+            "import { Page } from '@playwright/test';\nimport { BasePage } from '../../base/BasePage';\n\n"
             "export class GlobalElement extends BasePage {\n"
             f"{decls}\n\n"
             "    constructor(page: Page) {\n"

@@ -235,6 +235,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
   const appId        = useAppSelector(s => s.app.appId)
   const appUrl       = useAppSelector(s => s.app.appUrl)
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
+  const targetTool   = useAppSelector(s => s.app.targetTool)
 
   const [rows,         setRows]         = useState<DesignRow[]>([])
   const [importOpen,   setImportOpen]   = useState(false)
@@ -248,21 +249,23 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
   const [savePlan]     = useSavePlanMutation()
   const [triggerCrawl] = useTriggerCrawlMutation()
 
-  // Load saved test cases on tab activation
-  const { data: apiTcs = [] } = useGetTestCasesQuery(appId, { skip: !appId || !active })
+  // Load saved test cases on tab activation — refetch every time tab becomes active
+  const { data: apiTcs = [], refetch: refetchTcs } = useGetTestCasesQuery(appId, { skip: !appId || !active })
 
   useEffect(() => {
-    if (!active || apiTcs.length === 0) return
+    if (active && appId) refetchTcs()
+  }, [active, appId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!active) return
     setRows(prev => {
+      // Keep local excel-only rows; replace all api-sourced rows with fresh API data
+      const excelOnly = prev.filter(r => r.source === 'excel')
       const existingMap = new Map(prev.map(r => [r.id, r]))
-      const updated: DesignRow[] = []
-      const seen = new Set<string>()
-      for (const tc of apiTcs as TestCase[]) {
-        seen.add(tc.tc_name)
+      const apiRows = (apiTcs as TestCase[]).map(tc => {
         const existing = existingMap.get(tc.tc_name)
         if (existing) {
-          // Always sync metadata from API (method_name, file_path, plan_steps)
-          updated.push({
+          return {
             ...existing,
             method_name: tc.method_name || existing.method_name,
             file_path:   tc.file_path   || existing.file_path,
@@ -271,16 +274,14 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
             planResult:  existing.planResult ?? (tc.plan_steps?.length
               ? { steps: tc.plan_steps, parameters: tc.parameters ?? [], confidence: tc.confidence }
               : null),
-          })
-        } else {
-          updated.push(makeApiRow(tc))
+          }
         }
-      }
-      // Keep any local-only rows (excel imports not yet saved)
-      for (const r of prev) {
-        if (!seen.has(r.id)) updated.push(r)
-      }
-      return updated
+        return makeApiRow(tc)
+      })
+      // Excel-only rows that aren't yet in the API response go at the end
+      const apiIds = new Set((apiTcs as TestCase[]).map(tc => tc.tc_name))
+      const localOnly = excelOnly.filter(r => !apiIds.has(r.id))
+      return [...apiRows, ...localOnly]
     })
   }, [active, apiTcs])
 
@@ -309,6 +310,16 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
     if (newRows.length > 0) setRows(prev => [...prev, ...newRows])
   }
 
+  // ── Framework dir key helper ─────────────────────────────────────────────────
+
+  const frameworkBody = () => {
+    const tool = targetTool ?? 'selenium-java'
+    if (tool.includes('ts'))     return { framework: 'ts',     ts_dir:  frameworkDir }
+    if (tool.includes('js'))     return { framework: 'js',     js_dir:  frameworkDir }
+    if (tool.includes('python')) return { framework: 'python', py_dir:  frameworkDir }
+    return { framework: 'java', java_dir: frameworkDir }
+  }
+
   // ── Generate script per row ──────────────────────────────────────────────────
 
   const generateScript = async (row: DesignRow) => {
@@ -317,7 +328,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
       await planRun({
         app_id: appId, tc_name: row.tc_name,
         description: row.description,
-        java_dir: frameworkDir,
+        ...frameworkBody(),
         steps: row.rawSteps,
       }).unwrap()
 
@@ -363,7 +374,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
         ? { ...row.planResult, steps: row.stepEdits }
         : row.planResult
       const resp = await savePlan({
-        app_id: appId, java_dir: frameworkDir,
+        app_id: appId, ...frameworkBody(),
         test_cases: [{ tc_name: row.tc_name, result, raw_steps: row.rawSteps }],
       }).unwrap()
       // Try to get file_path from save response

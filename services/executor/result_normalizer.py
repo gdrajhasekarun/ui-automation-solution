@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger("executor.result_normalizer")
 
 
-def normalize_jest(report_path: str, run_id: str) -> list[dict]:
+def normalize_jest(report_path: str, run_id: str = "") -> list[dict]:
     """Parse Jest --json output file into normalized results."""
     if not os.path.exists(report_path):
         logger.warning("Jest report not found: %s", report_path)
@@ -22,8 +22,9 @@ def normalize_jest(report_path: str, run_id: str) -> list[dict]:
 
     results = []
     for suite in report.get("testResults", []):
-        for test in suite.get("testResults", []):
-            title = test.get("ancestorTitles", [""])[-1] + " > " + test.get("title", "")
+        # Jest uses "assertionResults" in newer versions, "testResults" in older
+        tests_in_suite = suite.get("assertionResults") or suite.get("testResults") or []
+        for test in tests_in_suite:
             # Extract the base method name (before " [0]" suffix)
             full_title = test.get("fullName", test.get("title", "unknown"))
             method = full_title.split(" [")[0].strip()
@@ -51,7 +52,7 @@ def normalize_jest(report_path: str, run_id: str) -> list[dict]:
     return results
 
 
-def normalize_pytest(report_path: str, run_id: str) -> list[dict]:
+def normalize_pytest(report_path: str, run_id: str = "") -> list[dict]:
     """Parse pytest-json-report output file into normalized results."""
     if not os.path.exists(report_path):
         logger.warning("pytest report not found: %s", report_path)

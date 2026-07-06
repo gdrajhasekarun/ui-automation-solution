@@ -4,6 +4,7 @@ import { SelectorRegistry } from '../utils/SelectorRegistry';
 
 export abstract class BasePage {
   protected readonly _page: Page;
+  protected get page(): Page { return this._page; }
 
   constructor(page: Page) {
     this._page = page;

@@ -76,6 +76,32 @@ def _build_type_annotation(params: list) -> str:
     return "{ " + fields + " }"
 
 
+def _build_step_chain(steps: list, starting_class: str, final_assertion: dict) -> list[str]:
+    """Build step lines, tracking page object variable per navigation step."""
+    lines = [f"    let p: any = new {starting_class}(page);"]
+    for step in steps:
+        mname = step.get("methodName", "")
+        is_nav = step.get("isNavigation", False)
+        if step.get("hasParameter") and step.get("parameterName"):
+            call = f"p.{mname}(data.{step['parameterName']})"
+        else:
+            call = f"p.{mname}()"
+        if is_nav:
+            lines.append(f"    p = await {call};")
+        else:
+            lines.append(f"    await {call};")
+
+    if final_assertion.get("methodName"):
+        a_param = final_assertion.get("parameterName", "")
+        if a_param:
+            lines.append(f"    await p.{final_assertion['methodName']}(data.{a_param});")
+        else:
+            lines.append(f"    await p.{final_assertion['methodName']}();")
+    else:
+        lines.append("    await p.assertPageLoaded();")
+    return lines
+
+
 def _build_test_block(planner_output: dict, description: str, method_name: str) -> str:
     params = planner_output.get("parameters", [])
     steps = planner_output.get("steps", [])
@@ -89,31 +115,16 @@ def _build_test_block(planner_output: dict, description: str, method_name: str) 
         low_conf = f"    // WARNING: Low confidence ({confidence:.2f}) — verify this sequence manually\n"
 
     steps = [s for s in steps if s.get("methodName", "").lower() != "launch"]
-    chain_lines = [f"    const p = new {starting_class}(page);"]
-    for step in steps:
-        mname = step.get("methodName", "")
-        if step.get("hasParameter") and step.get("parameterName"):
-            chain_lines.append(f"    await p.{mname}(data.{step['parameterName']});")
-        else:
-            chain_lines.append(f"    await p.{mname}();")
-
-    if final_assertion.get("methodName"):
-        a_param = final_assertion.get("parameterName", "")
-        if a_param:
-            chain_lines.append(f"    await p.{final_assertion['methodName']}(data.{a_param});")
-        else:
-            chain_lines.append(f"    await p.{final_assertion['methodName']}();")
-    else:
-        chain_lines.append("    await p.assertPageLoaded();")
-
+    chain_lines = _build_step_chain(steps, starting_class, final_assertion)
     chain = "\n".join(chain_lines)
 
     return (
         f"\n"
-        f"  const cases_{method_name} = JsonDataProvider.getData<{type_ann}>('{method_name}');\n"
-        f"  test.each(cases_{method_name}.map((d, i) => [i, d] as [number, {type_ann}]))(\n"
+        f"  type CaseRow_{method_name} = {type_ann};\n"
+        f"  const cases_{method_name} = JsonDataProvider.getData<CaseRow_{method_name}>('{method_name}');\n"
+        f"  test.each(cases_{method_name}.map((d, i) => [i, d] as [number, CaseRow_{method_name}]))(\n"
         f"    '{method_name} [%i]',\n"
-        f"    async (_i, data) => {{\n"
+        f"    async (_i: number, data: CaseRow_{method_name}) => {{\n"
         f"{low_conf}"
         f"{chain}\n"
         f"    }}\n"
@@ -140,12 +151,14 @@ def generate(planner_output: dict, app_id: str, framework_dir: str,
         method_name = f"{base_name}{i}"
 
     new_block = _build_test_block(planner_output, description, method_name)
-    page_import = f"import {{ {starting_class} }} from '../../src/pages/generated/{starting_class}';"
+    page_import = f"import {{ {starting_class} }} from '../../src/pages/{starting_class}';"
 
     if os.path.exists(file_path):
         with open(file_path) as f:
             content = f.read()
-        content = content.rstrip().rstrip("});").rstrip() + "\n" + new_block + _FILE_FOOTER
+        # Strip closing `});` of the describe block, append new test, re-close
+        idx = content.rfind("});")
+        content = content[:idx].rstrip() + "\n" + new_block + _FILE_FOOTER
         with open(file_path, "w") as f:
             f.write(content)
         logger.info(f"Appended test to {class_name}.test.ts")

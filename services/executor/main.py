@@ -19,9 +19,10 @@ from excel_writer import write as excel_write
 from mvn_runner import run as mvn_run
 from surefire_parser import parse as surefire_parse
 from testng_generator import generate as testng_gen
-from js_runner import run as js_run
-from ts_runner import run as ts_run
-from py_runner import run as py_run
+from js_runner import run as js_run, _write_testdata as js_write_testdata
+from ts_runner import run as ts_run, _write_testdata as ts_write_testdata
+from py_runner import run as py_run, _write_testdata as py_write_testdata
+from result_normalizer import normalize_jest, normalize_pytest
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("executor-service")
@@ -58,6 +59,18 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
             })
     except Exception:
         pass
+
+
+def _detect_framework(fw_dir: str) -> str:
+    """Infer framework from directory name when the caller doesn't provide one."""
+    name = os.path.basename(fw_dir.rstrip("/\\"))
+    if name.endswith("-ts"):
+        return "ts"
+    if name.endswith("-js"):
+        return "js"
+    if name.endswith("-py"):
+        return "python"
+    return "java"
 
 
 async def _execute(run_id: str, app_id: str, java_dir: str,
@@ -138,6 +151,8 @@ async def execute_run(body: dict, background_tasks: BackgroundTasks):
     selected_tests = body.get("selected_tests", [])
     test_data      = body.get("test_data", [])
 
+    if not body.get("framework"):
+        framework = _detect_framework(fw_dir)
     _jobs[run_id] = {"status": "started", "passed": 0, "failed": 0, "skipped": 0, "framework": framework}
     background_tasks.add_task(_execute, run_id, app_id, fw_dir, selected_tests, test_data, framework, app_url)
     return {"run_id": run_id, "status": "STARTED"}
@@ -279,28 +294,111 @@ async def import_data(app_id: str, file: UploadFile = File(...), java_dir: str |
     return {"imported": imported, "testng_xml": testng_path}
 
 
+# ── dependency installer ──────────────────────────────────────────────────────
+
+async def _install_deps_stream(framework: str, fw_dir: str):
+    """Yield log lines while installing dependencies for a framework."""
+    if framework in ("js", "ts"):
+        cmds = [["npm", "install"]]
+        if framework == "ts":
+            cmds.append(["npx", "playwright", "install", "chromium"])
+    elif framework == "python":
+        cmds = [["pip", "install", "-q", "-e", "."]]
+    else:
+        return
+
+    for cmd in cmds:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=fw_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        async for raw in proc.stdout:  # type: ignore[union-attr]
+            yield raw.decode(errors="replace").rstrip()
+        await proc.wait()
+
+
+async def _install_deps(framework: str, fw_dir: str) -> None:
+    """Install dependencies silently (used in background task runners)."""
+    if framework in ("js", "ts"):
+        cmd = ["npm", "install"]
+    elif framework == "python":
+        cmd = ["pip", "install", "-q", "-e", "."]
+    else:
+        return
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=fw_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    await proc.communicate()
+
+
 # ── run suite (SSE) ───────────────────────────────────────────────────────────
 
 @app.post("/execute/run-suite")
 async def run_suite(body: dict):
-    """Run the pre-generated testng.xml and stream Maven output via SSE."""
-    app_id   = body["app_id"]
-    java_dir = resolve_java_dir(body.get("java_dir", JAVA_DIR))
-    app_url  = body.get("app_url", "")
-    run_id   = "run-" + uuid.uuid4().hex[:8]
-    started  = datetime.now(timezone.utc).isoformat()
+    """Run the test suite and stream output via SSE. Supports java, js, ts, python."""
+    app_id    = body["app_id"]
+    framework = body.get("framework", "java")
+    app_url   = body.get("app_url", "")
+    test_data = body.get("test_data", [])
+    dir_key_map = {"js": "js_dir", "ts": "ts_dir", "python": "py_dir"}
+    dir_key   = dir_key_map.get(framework, "java_dir")
+    raw_dir   = body.get(dir_key) or body.get("java_dir", JAVA_DIR)
+    fw_dir    = resolve_java_dir(raw_dir)
+    if not body.get("framework"):
+        framework = _detect_framework(fw_dir)
+    run_id    = "run-" + uuid.uuid4().hex[:8]
+    started   = datetime.now(timezone.utc).isoformat()
 
     async def _stream():
-        testng_file = os.path.join(java_dir, "testng.xml")
-        mvn_args = [
-            "mvn", "test",
-            f"-Dsurefire.suiteXmlFiles={testng_file}",
-        ]
-        if app_url:
-            mvn_args.append(f"-Dapp.url={app_url}")
+        # ── install dependencies ──
+        if framework in ("js", "ts", "python"):
+            yield f"data: {json.dumps({'line': f'[executor] Installing {framework} dependencies…'})}\n\n"
+            async for line in _install_deps_stream(framework, fw_dir):
+                yield f"data: {json.dumps({'line': line})}\n\n"
+
+        # ── write test data files ──
+        if framework == "js":
+            js_write_testdata(fw_dir, test_data)
+        elif framework == "ts":
+            ts_write_testdata(fw_dir, test_data)
+        elif framework == "python":
+            py_write_testdata(fw_dir, test_data)
+
+        # ── build run command ──
+        env = {**os.environ, "APP_URL": app_url}
+        if framework in ("js", "ts"):
+            report_file = "jest-results.json"
+            cmd = [
+                "npx", "jest",
+                "--json", f"--outputFile={report_file}",
+                "--forceExit",
+            ]
+        elif framework == "python":
+            report_file = "pytest-results.json"
+            cmd = [
+                "python", "-m", "pytest",
+                "tests/generated/",
+                "--json-report", f"--json-report-file={report_file}",
+                "--tb=short", "-q",
+            ]
+        else:
+            # Java / Maven
+            testng_file = os.path.join(fw_dir, "testng.xml")
+            cmd = ["mvn", "test", f"-Dsurefire.suiteXmlFiles={testng_file}"]
+            if app_url:
+                cmd.append(f"-Dapp.url={app_url}")
+            report_file = ""
+            env = os.environ.copy()
+
         proc = await asyncio.create_subprocess_exec(
-            *mvn_args,
-            cwd=java_dir,
+            *cmd,
+            cwd=fw_dir,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -312,10 +410,15 @@ async def run_suite(body: dict):
         await proc.wait()
         exit_code = proc.returncode
 
-        # parse surefire results
-        results = surefire_parse(java_dir, run_id)
+        # ── parse results ──
+        if framework in ("js", "ts"):
+            results = normalize_jest(os.path.join(fw_dir, report_file), run_id)
+        elif framework == "python":
+            results = normalize_pytest(os.path.join(fw_dir, report_file), run_id)
+        else:
+            results = surefire_parse(fw_dir, run_id)
 
-        # write result file
+        # ── write result file ──
         result_obj = {
             "run_id":      run_id,
             "app_id":      app_id,
