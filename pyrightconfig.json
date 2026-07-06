@@ -26,6 +26,10 @@
     {
       "root": "services/crawl_ai",
       "extraPaths": ["services/crawl_ai"]
+    },
+    {
+      "root": "services/generator_v2",
+      "extraPaths": ["services/generator_v2"]
     }
   ]
 }

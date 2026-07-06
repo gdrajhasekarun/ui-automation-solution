@@ -72,7 +72,7 @@
       "request": "launch",
       "module": "uvicorn",
       "args": ["main:app", "--port", "8002", "--reload"],
-      "cwd": "${workspaceFolder}/services/generator_v2",
+      "cwd": "${workspaceFolder}/services/generator",
       "python": "${workspaceFolder}/.venv/bin/python",
       "envFile": "${workspaceFolder}/.env",
       "env": {

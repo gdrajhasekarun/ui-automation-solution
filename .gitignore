@@ -30,6 +30,15 @@ shared/outputs/
 */target/
 **/pom_registry.json
 
+# Claude config
+**/CLAUDE.md
+
+# Generated page classes (all cms-app-crawler frameworks)
+cms-app-crawler/src/main/java/pages/generated/
+cms-app-crawler-js/src/pages/generated/
+cms-app-crawler-ts/src/pages/generated/
+cms-app-crawler-py/src/pages/generated/
+
 # macOS
 .DS_Store
 

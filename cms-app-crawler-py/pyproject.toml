@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "cms-app-crawler-py"
+version = "1.0.0"
+description = "CMS App Playwright test framework — Python"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.44.0",
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.7",
+    "pytest-json-report>=1.5.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+timeout = 60
+
+[tool.setuptools.packages.find]
+where = ["src"]
