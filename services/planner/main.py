@@ -15,7 +15,23 @@ from excel_reader import load_test_cases
 from plan_eval import eval_plan
 from step_planner import plan, _build_registry_index, _build_pageref_class_map
 from story_parser import parse_story
-from test_generator import generate, _tc_name_to_method
+from test_generator import generate as generate_java, _tc_name_to_method
+from js_generator import generate as generate_js
+from ts_generator import generate as generate_ts
+from py_generator import generate as generate_py
+
+_GENERATORS = {
+    "java":   generate_java,
+    "js":     generate_js,
+    "ts":     generate_ts,
+    "python": generate_py,
+}
+_FRAMEWORK_DIR_KEY = {
+    "java":   "java_dir",
+    "js":     "js_dir",
+    "ts":     "ts_dir",
+    "python": "py_dir",
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("planner-service")
@@ -60,7 +76,8 @@ def _resolve_java_dir(java_dir: str) -> str:
     return os.path.abspath(os.path.join(REPO_ROOT, java_dir))
 
 
-async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, java_dir: str, steps: list = []):
+async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, java_dir: str,
+                    steps: list = [], framework: str = "java"):
     java_dir = _resolve_java_dir(java_dir)
     _jobs[job_id]["status"] = "running"
     try:
@@ -101,6 +118,7 @@ async def _run_plan(job_id: str, app_id: str, tc_name: str, description: str, ja
         _jobs[job_id].update({
             "status": "done",
             "tc_name": tc_name,
+            "framework": framework,
             "confidence": confidence,
             "planner_status": status,
             "review_reason": result.get("review_reason", ""),
@@ -152,21 +170,28 @@ async def plan_run(body: dict, background_tasks: BackgroundTasks):
     app_id      = body["app_id"]
     tc_name     = body["tc_name"]
     description = body.get("description", "")
-    java_dir    = body.get("java_dir", JAVA_DIR)
+    framework   = body.get("framework", "java")
+    dir_key     = _FRAMEWORK_DIR_KEY.get(framework, "java_dir")
+    fw_dir      = body.get(dir_key) or body.get("java_dir", JAVA_DIR)
     steps       = body.get("steps", [])
 
     job_id = "job-" + uuid.uuid4().hex[:8]
-    _jobs[job_id] = {"status": "started", "tc_name": tc_name}
+    _jobs[job_id] = {"status": "started", "tc_name": tc_name, "framework": framework}
 
-    logger.info(f"Planner activated — planning {tc_name} ({len(steps)} steps)")
-    background_tasks.add_task(_run_plan, job_id, app_id, tc_name, description, java_dir, steps)
+    logger.info(f"Planner activated — planning {tc_name} ({len(steps)} steps) [{framework}]")
+    background_tasks.add_task(_run_plan, job_id, app_id, tc_name, description, fw_dir, steps, framework)
     return {"job_id": job_id, "status": "STARTED"}
 
 
 @app.post("/plan/save")
 async def plan_save(body: dict):
-    app_id   = body.get("app_id", "")
-    java_dir = _resolve_java_dir(body.get("java_dir", JAVA_DIR))
+    app_id    = body.get("app_id", "")
+    framework = body.get("framework", "java")
+    _gen      = _GENERATORS.get(framework, generate_java)
+    # resolve the correct directory for the chosen framework
+    dir_key   = _FRAMEWORK_DIR_KEY.get(framework, "java_dir")
+    raw_dir   = body.get(dir_key) or body.get("java_dir", JAVA_DIR)
+    fw_dir    = _resolve_java_dir(raw_dir)
     saved: list = []
     for tc in body.get("test_cases", []):
         result      = tc.get("result") or {}
@@ -182,7 +207,7 @@ async def plan_save(body: dict):
                 if steps:
                     result["startingClass"] = steps[0].get("pageClass", "")
             try:
-                file_path, gen_method = generate(result, app_id, java_dir, description, tc_name)
+                file_path, gen_method = _gen(result, app_id, fw_dir, description, tc_name)
                 if gen_method:
                     result["testMethodName"] = gen_method
             except Exception as e:

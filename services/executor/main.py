@@ -19,6 +19,9 @@ from excel_writer import write as excel_write
 from mvn_runner import run as mvn_run
 from surefire_parser import parse as surefire_parse
 from testng_generator import generate as testng_gen
+from js_runner import run as js_run
+from ts_runner import run as ts_run
+from py_runner import run as py_run
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("executor-service")
@@ -58,7 +61,8 @@ async def _notify(app_id: str, stage: str, message: str, level: str = "INFO"):
 
 
 async def _execute(run_id: str, app_id: str, java_dir: str,
-                   selected_tests: list[str], test_data: list[dict]):
+                   selected_tests: list[str], test_data: list[dict],
+                   framework: str = "java", app_url: str = ""):
     global _active_runs
     _active_runs += 1
     _jobs[run_id]["status"] = "running"
@@ -67,16 +71,23 @@ async def _execute(run_id: str, app_id: str, java_dir: str,
 
     try:
         n = len(selected_tests)
-        logger.info(f"Executing run {run_id} — {n} test cases selected")
-        await _notify(app_id, "EXECUTE", f"Run started — {n} tests")
+        logger.info(f"Executing run {run_id} — {n} test cases selected [{framework}]")
+        await _notify(app_id, "EXECUTE", f"Run started — {n} tests [{framework}]")
 
-        testdata_path = excel_write(test_data, java_dir)
-        testng_path = testng_gen(selected_tests, java_dir, run_id, app_id)
+        if framework in ("js", "ts", "python"):
+            runner = {"js": js_run, "ts": ts_run, "python": py_run}[framework]
+            fw_result = await runner(java_dir, run_id, app_id, selected_tests, test_data,
+                                     DASHBOARD_URL, app_url)
+            exit_code = fw_result.get("exit_code", 1)
+            results = fw_result.get("results", [])
+        else:
+            # Java / Maven path
+            testdata_path = excel_write(test_data, java_dir)
+            testng_path = testng_gen(selected_tests, java_dir, run_id, app_id)
+            mvn_result = await mvn_run(java_dir, run_id, app_id, DASHBOARD_URL)
+            exit_code = mvn_result.get("exit_code", 1)
+            results = surefire_parse(java_dir, run_id)
 
-        mvn_result = await mvn_run(java_dir, run_id, app_id, DASHBOARD_URL)
-        exit_code = mvn_result.get("exit_code", 1)
-
-        results = surefire_parse(java_dir, run_id)
         passed = sum(1 for r in results if r["status"] == "PASSED")
         failed = sum(1 for r in results if r["status"] == "FAILED")
 
@@ -115,14 +126,20 @@ async def _execute(run_id: str, app_id: str, java_dir: str,
 
 @app.post("/execute/run")
 async def execute_run(body: dict, background_tasks: BackgroundTasks):
-    app_id = body["app_id"]
-    run_id = body.get("run_id", "run-" + uuid.uuid4().hex[:8])
-    java_dir = resolve_java_dir(body.get("java_dir", JAVA_DIR))
+    app_id         = body["app_id"]
+    run_id         = body.get("run_id", "run-" + uuid.uuid4().hex[:8])
+    framework      = body.get("framework", "java")
+    app_url        = body.get("app_url", "")
+    # accept framework-specific dir keys or fall back to java_dir
+    dir_key_map    = {"js": "js_dir", "ts": "ts_dir", "python": "py_dir"}
+    dir_key        = dir_key_map.get(framework, "java_dir")
+    raw_dir        = body.get(dir_key) or body.get("java_dir", JAVA_DIR)
+    fw_dir         = resolve_java_dir(raw_dir)
     selected_tests = body.get("selected_tests", [])
-    test_data = body.get("test_data", [])
+    test_data      = body.get("test_data", [])
 
-    _jobs[run_id] = {"status": "started", "passed": 0, "failed": 0, "skipped": 0}
-    background_tasks.add_task(_execute, run_id, app_id, java_dir, selected_tests, test_data)
+    _jobs[run_id] = {"status": "started", "passed": 0, "failed": 0, "skipped": 0, "framework": framework}
+    background_tasks.add_task(_execute, run_id, app_id, fw_dir, selected_tests, test_data, framework, app_url)
     return {"run_id": run_id, "status": "STARTED"}
 
 
