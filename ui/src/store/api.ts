@@ -69,6 +69,10 @@ export const api = createApi({
       query: (body) => ({ url: '/crawl/trigger', method: 'POST', body }),
     }),
 
+    triggerGenerate: build.mutation<unknown, { app_id: string; target_tool: string; trigger_type: string; framework_dir?: string }>({
+      query: (body) => ({ url: '/pom/trigger', method: 'POST', body }),
+    }),
+
     getGraph: build.query<{ nodes: unknown[] | Record<string, unknown>; edges: unknown[]; globalElements?: Record<string, unknown>; meta: unknown }, string>({
       query: (appId) => `/graph/${encodeURIComponent(appId)}`,
     }),
@@ -187,4 +191,5 @@ export const {
   useExportTemplateMutation,
   useImportTestDataMutation,
   useGetExecutorResultsQuery,
+  useTriggerGenerateMutation,
 } = api

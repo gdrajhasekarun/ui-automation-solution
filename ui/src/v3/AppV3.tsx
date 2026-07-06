@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   Badge, Button, Card, ConfigProvider, Descriptions, Divider, Input, InputNumber,
-  Layout, Modal, Select, Space, Switch, Tabs, Tag, Tooltip, Typography, theme as antTheme,
+  Layout, Modal, Select, Space, Switch, Tabs, Tag, Tooltip, Typography, message, theme as antTheme,
 } from 'antd'
 import {
   BulbFilled, BulbOutlined, CheckCircleOutlined, BuildOutlined, CompassOutlined,
@@ -27,7 +27,7 @@ import {
   useInterpretStoryMutation,
 } from './apiV3'
 import type { UiEvent, StoryInterpretResp } from '../types'
-import { useTriggerCrawlMutation } from '../store/api'
+import { useTriggerCrawlMutation, useTriggerGenerateMutation } from '../store/api'
 
 const { Header, Content, Sider } = Layout
 const MONO: React.CSSProperties = { fontFamily: "'IBM Plex Mono', monospace" }
@@ -704,20 +704,65 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
   const [error,      setError]      = useState<string | null>(null)
 
   // Re-crawl modal state
-  const [rcOpen,    setRcOpen]    = useState(false)
-  const [rcIntent,  setRcIntent]  = useState('')
-  const [rcUrl,     setRcUrl]     = useState(reduxAppUrl)
-  const [rcFwDir,   setRcFwDir]   = useState(reduxFwDir)
+  const [rcOpen,     setRcOpen]     = useState(false)
+  const [rcIntent,   setRcIntent]   = useState('')
+  const [rcUrl,      setRcUrl]      = useState(reduxAppUrl)
+  const [rcFwDir,    setRcFwDir]    = useState(reduxFwDir)
+  const [rcHeadless, setRcHeadless] = useState(true)
   const [recrawling, setRecrawling] = useState(false)
   const [triggerCrawl] = useTriggerCrawlMutation()
+
+  // Re-generate mapping modal state
+  const [genOpen,      setGenOpen]      = useState(false)
+  const [genFwDir,     setGenFwDir]     = useState(reduxFwDir)
+  const [genTargetTool, setGenTargetTool] = useState(targetTool || 'selenium-java')
+  const [generating,   setGenerating]   = useState(false)
+  const [triggerGenerate] = useTriggerGenerateMutation()
+
+  const GEN_TOOL_OPTIONS = [
+    { value: 'selenium-java',     label: '☕ Selenium Java' },
+    { value: 'selenium-csharp',   label: '🔷 Selenium C#' },
+    { value: 'selenium-python',   label: '🐍 Selenium Python' },
+    { value: 'playwright-js',     label: '🎭 Playwright JS' },
+    { value: 'playwright-ts',     label: '🎭 Playwright TypeScript' },
+    { value: 'playwright-python', label: '🐍 Playwright Python' },
+    { value: 'cypress-js',        label: '🌲 Cypress JS' },
+    { value: 'cypress-ts',        label: '🌲 Cypress TypeScript' },
+  ]
+
+  const handleGenerate = async () => {
+    if (!localAppId.trim()) return
+    setGenerating(true)
+    if (genFwDir.trim()) dispatch(setFrameworkDir(genFwDir.trim()))
+    if (genTargetTool)   dispatch(setTargetTool(genTargetTool as TargetTool))
+    try {
+      await triggerGenerate({
+        app_id: localAppId.trim(),
+        target_tool: genTargetTool,
+        trigger_type: 'INCREMENTAL',
+        framework_dir: genFwDir.trim() || undefined,
+      }).unwrap()
+
+      setGenOpen(false)
+      message.success('Mapping generation completed')
+      dispatch(bumpKbRefresh())
+    } catch (e: unknown) {
+      message.error(`Generation failed: ${(e as { message?: string })?.message ?? 'Unknown'}`)
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   // Keep re-crawl fields in sync with redux
   useEffect(() => { setRcUrl(reduxAppUrl) }, [reduxAppUrl])
   useEffect(() => { setRcFwDir(reduxFwDir) }, [reduxFwDir])
+  useEffect(() => { setGenFwDir(reduxFwDir) }, [reduxFwDir])
+  useEffect(() => { if (targetTool) setGenTargetTool(targetTool) }, [targetTool])
 
   const handleRecrawl = async () => {
     if (!localAppId.trim()) return
     setRecrawling(true)
+    if (rcFwDir.trim()) dispatch(setFrameworkDir(rcFwDir.trim()))
     try {
       await triggerCrawl({
         app_id: localAppId.trim(),
@@ -725,7 +770,7 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
         build_id: 'recrawl-' + Date.now(),
         trigger_type: 'UPDATE',
         flow_name: rcIntent.trim() || undefined,
-        headless: true,
+        headless: rcHeadless,
         framework_dir: rcFwDir.trim() || undefined,
       }).unwrap()
 
@@ -877,6 +922,14 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
 
         <div style={{ flex: 1 }} />
         <Button
+          icon={<SyncOutlined />}
+          size="small"
+          onClick={() => setGenOpen(true)}
+          style={{ ...MONO, fontSize: 12, flexShrink: 0 }}
+        >
+          Re-Generate Mapping
+        </Button>
+        <Button
           icon={<ReloadOutlined />}
           size="small"
           onClick={() => setRcOpen(true)}
@@ -1017,6 +1070,42 @@ function KnowledgeBaseTab({ C, active }: { C: typeof DARK; active: boolean }) {
               placeholder="e.g. Login flow, Claims submission, Member portal"
               style={{ ...MONO, fontSize: 12 }} />
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 12, ...MONO }}>Headless Mode</div>
+              <div style={{ fontSize: 11, color: '#999' }}>Run browser without UI (faster)</div>
+            </div>
+            <Switch checked={rcHeadless} onChange={setRcHeadless} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Re-Generate Mapping Modal */}
+      <Modal
+        open={genOpen}
+        title={<span style={{ ...MONO, fontSize: 14 }}>Re-Generate Mapping Methods</span>}
+        onCancel={() => setGenOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setGenOpen(false)}>Cancel</Button>,
+          <Button key="start" type="primary" loading={generating}
+            icon={<SyncOutlined />} onClick={handleGenerate}
+            disabled={!localAppId.trim()}>
+            Start Generation
+          </Button>,
+        ]}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 0' }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4, ...MONO }}>Framework Path</div>
+            <Input value={genFwDir} placeholder="./shared/java"
+              onChange={e => setGenFwDir(e.target.value)} style={{ ...MONO, fontSize: 12 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 4, ...MONO }}>Language / Framework</div>
+            <Select style={{ width: '100%' }} value={genTargetTool}
+              onChange={v => setGenTargetTool(v)}
+              options={GEN_TOOL_OPTIONS} />
+          </div>
         </div>
       </Modal>
     </div>
@@ -1142,7 +1231,7 @@ export default function AppV3() {
             <div style={{ display: activeTab === 'ex' ? 'flex' : 'none', flex: 1, overflow: 'auto', flexDirection: 'column' }}>
               <GlobalInfoBar />
               <div style={{ flex: 1, padding: 24 }}>
-                <ExecutionTab />
+                <ExecutionTab active={activeTab === 'ex'} />
               </div>
             </div>
           </Content>

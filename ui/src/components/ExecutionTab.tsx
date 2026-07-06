@@ -208,7 +208,7 @@ function ImportModal({ open, onClose, onImported, suiteMethodNames, appId, javaD
 
 type ExecView = 'table' | 'suite' | 'running'
 
-export default function ExecutionTab() {
+export default function ExecutionTab({ active = false }: { active?: boolean }) {
   const { C, isDark } = useTheme()
   const appId        = useAppSelector(s => s.app.appId)
   const frameworkDir = useAppSelector(s => s.app.frameworkDir)
@@ -239,10 +239,15 @@ export default function ExecutionTab() {
   const [allRunsOpen, setAllRunsOpen]   = useState(false)
 
   // queries
-  const { data: tcs = [] } = useGetTestCasesQuery(appId, { skip: !appId })
+  const { data: tcs = [], refetch: refetchTcs } = useGetTestCasesQuery(appId, { skip: !appId || !active })
   const { data: history = [], refetch: refetchHistory } = useGetExecutorResultsQuery(
-    { appId }, { skip: !appId, pollingInterval: 30000 }
+    { appId }, { skip: !appId || !active, pollingInterval: active ? 30000 : 0 }
   )
+
+  // Refetch on tab activation
+  useEffect(() => {
+    if (active && appId) { refetchTcs(); refetchHistory() }
+  }, [active, appId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const readyTcs  = tcs.filter(tc => (tc.status ?? '').toUpperCase() !== 'NEEDS_REVIEW')
   const selected  = tcs.filter(tc => selectedIds.includes(tc.tc_id))

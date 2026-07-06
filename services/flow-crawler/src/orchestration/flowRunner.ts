@@ -436,7 +436,8 @@ export async function runFromPage(
       // Content changed on same page — record new wizard step as a node, re-capture and loop
       if (result.action === 'content_change' || result.action === 'click') {
         log.info('PICK', `  Page content changed — re-capturing elements and continuing flow`)
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {})
+        await page.waitForTimeout(1500)
         await waitForIdle(page)
         // Scroll to bottom so off-screen elements (forms revealed below the fold) are rendered
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {})

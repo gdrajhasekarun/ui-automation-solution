@@ -52,10 +52,11 @@ Pick the ONE element that best represents the next step toward "${flowName}".
 Rules:
 - ALWAYS start by evaluating the completed steps list. Determine whether the flow goal has already been achieved based on what those steps accomplished, regardless of what fields are currently visible on the page.
 - Set flowDone=true and intentCoverage=100 if the completed steps show the flow goal has been fully achieved. Do NOT re-submit or re-execute an action whose outcome already fulfilled the goal.
+- CRITICAL: If any completed step mentions "results", "table shown", "rows", "results displayed", or similar outcome confirming the search/action succeeded — set flowDone=true immediately. The form fields you see on screen are part of an already-submitted form; do NOT re-submit them.
 - If the flow is not yet done and form fields were filled in the current iteration, pick the appropriate submit/action button for that form next.
 - If a dialog/overlay is present (Accept, Continue, Close), always pick that first.
 - Prefer elements whose label directly matches the flow name or a step in it.
-- Do NOT pick an element that was already successfully executed in the completed steps unless the flow explicitly requires repeating it.
+- Do NOT pick a button or submit element that was already successfully executed (appears in completed steps) and produced a visible outcome (results, confirmation, navigation). Executing it again would re-submit the form unnecessarily.
 - On a product detail page: if "Add to cart", "Buy", or "Get it now" is present, ALWAYS prefer it over pagination, color/size pickers, or promotional links to advance a purchase flow.
 - Set elementId=null ONLY if absolutely no element in the list has any connection to the flow — this should be extremely rare.
 Also set intentCoverage to an integer 0–100 representing how much of the flow goal has been accomplished based on the completed steps (100 = fully done).

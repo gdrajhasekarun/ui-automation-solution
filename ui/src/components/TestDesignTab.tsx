@@ -241,7 +241,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
   const [editingStep,  setEditingStep]  = useState<EditingStep | null>(null)
 
   // Re-crawl modal
-  const [rcModal,    setRcModal]    = useState<{ tcName: string; url: string; intent: string; fwDir: string } | null>(null)
+  const [rcModal,    setRcModal]    = useState<{ tcName: string; url: string; intent: string; fwDir: string; headless: boolean } | null>(null)
   const [recrawling, setRecrawling] = useState(false)
 
   const [planRun]      = usePlanRunMutation()
@@ -380,7 +380,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
 
   const openRecrawl = (row: DesignRow) => {
     const steps = effectiveSteps(row)
-    setRcModal({ tcName: row.tc_name, url: appUrl, intent: deriveIntent(steps), fwDir: frameworkDir })
+    setRcModal({ tcName: row.tc_name, url: appUrl, intent: deriveIntent(steps), fwDir: frameworkDir, headless: true })
   }
 
   const confirmRecrawl = async () => {
@@ -392,7 +392,7 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
         build_id: 'recrawl-' + Date.now(),
         trigger_type: 'UPDATE',
         flow_name: rcModal.intent,
-        headless: true,
+        headless: rcModal.headless,
       }).unwrap()
 
       await new Promise<void>(resolve => {
@@ -940,6 +940,14 @@ export default function TestDesignTab({ onGoToExecution, active }: Props) {
               <Input.TextArea rows={4} value={rcModal.intent}
                 onChange={e => setRcModal(prev => prev ? { ...prev, intent: e.target.value } : null)}
                 style={{ ...MONO, fontSize: 12 }} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 12, ...MONO }}>Headless Mode</div>
+                <div style={{ fontSize: 11, color: '#999' }}>Run browser without UI (faster)</div>
+              </div>
+              <Switch checked={rcModal.headless}
+                onChange={v => setRcModal(prev => prev ? { ...prev, headless: v } : null)} />
             </div>
           </div>
         </Modal>
